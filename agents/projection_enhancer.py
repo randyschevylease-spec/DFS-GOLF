@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""BOT 3: DK-Specific Projection Enhancement."""
+"""BOT 3: DK-Specific Projection Enhancement + Weather Wave Adjustment."""
 import json, sys, math
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared_utils import *
+from weather import get_wave_adjustment
+from datagolf_client import get_predictions, find_current_event
 
 log = setup_logger("bot3", "bot3_projections.log")
 
@@ -83,6 +86,41 @@ def run():
 
     players = data.get("players", [])
     enhanced = [enhance_player(p) for p in players]
+
+    # Weather wave adjustment
+    am_advantage = 0.0
+    event_name = "Unknown"
+    try:
+        predictions = get_predictions()
+        event_info = find_current_event(predictions)
+        event_name = event_info["event_name"]
+        am_advantage, details, wave_conditions = get_wave_adjustment(event_name)
+    except Exception as e:
+        log.warning(f"Weather fetch failed: {e}")
+
+    if abs(am_advantage) >= 0.5:
+        wave_adj_half = am_advantage / 2.0
+        n_am, n_pm = 0, 0
+        for p in enhanced:
+            wave = p.get("tee_time_info", {}).get("wave", "").upper()
+            if wave in ("EARLY", "AM"):
+                p["enhanced_projection"]["final_proj_dk_pts"] = round(
+                    p["enhanced_projection"]["final_proj_dk_pts"] + wave_adj_half, 1)
+                p["enhanced_projection"]["wave_adj"] = round(wave_adj_half, 1)
+                n_am += 1
+            elif wave in ("LATE", "PM"):
+                p["enhanced_projection"]["final_proj_dk_pts"] = round(
+                    p["enhanced_projection"]["final_proj_dk_pts"] - wave_adj_half, 1)
+                p["enhanced_projection"]["wave_adj"] = round(-wave_adj_half, 1)
+                n_pm += 1
+            else:
+                p["enhanced_projection"]["wave_adj"] = 0.0
+        log.info(f"  Weather: {event_name} — AM advantage {am_advantage:+.1f} pts")
+        log.info(f"  Applied ±{abs(wave_adj_half):.1f} pts to {n_am} AM / {n_pm} PM players")
+    else:
+        for p in enhanced:
+            p["enhanced_projection"]["wave_adj"] = 0.0
+        log.info(f"  Weather: neutral wave conditions (adj={am_advantage:+.1f})")
 
     # Sort by projected points
     enhanced.sort(key=lambda p: p.get("enhanced_projection", {}).get("final_proj_dk_pts", 0), reverse=True)
