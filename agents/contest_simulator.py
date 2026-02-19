@@ -218,8 +218,37 @@ def generate_candidates(players, n_candidates):
 
     return [list(c) for c in candidates]
 
-def simulate(players, our_lineups, opp_lineups, n_sims, payout_structure, entry_fee, corr_matrix):
-    """Vectorized contest simulation with correlated player sampling."""
+def _compute_dupe_factors(our_lineups, opp_lineups, field_scale):
+    """Estimate expected duplicates for each of our lineups in the full field.
+
+    Returns array of dupe split factors: payout is divided by (1 + expected_dupes).
+    field_scale accounts for sim field being smaller than actual contest field.
+    """
+    n_ours = len(our_lineups)
+
+    # Count opponent lineup frequencies
+    opp_counts = {}
+    for lu in opp_lineups:
+        key = frozenset(lu)
+        opp_counts[key] = opp_counts.get(key, 0) + 1
+
+    # For each of our lineups, estimate dupes in full field
+    dupe_factors = np.ones(n_ours, dtype=np.float64)
+    n_with_dupes = 0
+    for i, lu in enumerate(our_lineups):
+        key = frozenset(lu)
+        sim_dupes = opp_counts.get(key, 0)
+        expected_dupes = sim_dupes * field_scale
+        dupe_factors[i] = 1.0 / (1.0 + expected_dupes)
+        if sim_dupes > 0:
+            n_with_dupes += 1
+
+    return dupe_factors, n_with_dupes
+
+
+def simulate(players, our_lineups, opp_lineups, n_sims, payout_structure, entry_fee,
+             corr_matrix, field_scale=1.0):
+    """Vectorized contest simulation with correlated player sampling and dupe adjustment."""
     n_players = len(players)
     n_ours = len(our_lineups)
     n_total = n_ours + len(opp_lineups)
@@ -241,6 +270,11 @@ def simulate(players, our_lineups, opp_lineups, n_sims, payout_structure, entry_
     # Pre-generate all correlated samples at once
     rng = np.random.default_rng()
     all_samples = rng.multivariate_normal(means, cov, size=n_sims)  # (n_sims, n_players)
+
+    # Compute dupe split factors
+    dupe_factors, n_with_dupes = _compute_dupe_factors(our_lineups, opp_lineups, field_scale)
+    log.info(f"  Dupe check: {n_with_dupes}/{n_ours} candidates have field duplicates "
+             f"(scale={field_scale:.1f}x)")
 
     payout_thresholds = sorted(payout_structure.items(), reverse=True)
 
@@ -272,11 +306,12 @@ def simulate(players, our_lineups, opp_lineups, n_sims, payout_structure, entry_
         ranks = np.searchsorted(sorted_all, our_scores, side='left')
         percentiles = (ranks / n_total) * 100
 
-        # Payouts
+        # Payouts (split by dupe factor)
         sim_payouts = np.zeros(n_ours, dtype=np.float32)
         for pct_thresh, mult in payout_thresholds:
             mask = (percentiles >= pct_thresh) & (sim_payouts == 0)
             sim_payouts[mask] = mult * entry_fee
+        sim_payouts *= dupe_factors
 
         payouts[:, sim] = sim_payouts
 
@@ -341,6 +376,7 @@ def run():
         }
 
     field_size = config['field_size']
+    actual_field_size = config.get('actual_field_size', field_size)
     max_entries = config.get('max_entries_per_user', 150)
     entry_fee = config['entry_fee']
     n_sims = config.get('simulation_params', {}).get('n_simulations', 10000)
@@ -369,8 +405,9 @@ def run():
 
     # Simulate
     print(f"\n[3/4] Simulating {n_sims:,} contests (vectorized)...")
+    field_scale = actual_field_size / max(len(opp_lineups), 1)
     roi, roi_var, cash_rate, mean_payouts, raw_payouts = simulate(
-        players, our_candidates, opp_lineups, n_sims, payout, entry_fee, corr_matrix
+        players, our_candidates, opp_lineups, n_sims, payout, entry_fee, corr_matrix, field_scale
     )
 
     print(f"  Avg ROI: {roi.mean():.1f}% | Best: {roi.max():.1f}% | Avg cash rate: {cash_rate.mean():.1f}%")
