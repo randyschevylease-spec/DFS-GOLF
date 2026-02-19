@@ -1,0 +1,10 @@
+credentials.json
+__pycache__/
+*.pyc
+.DS_Store
+cache/
+logs/
+shared/
+history/
+lineups_*.csv
+lineups_*.csv.bak
