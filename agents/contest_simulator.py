@@ -439,6 +439,59 @@ def run():
             'avg_ownership': round(float(np.mean([players[i]['ownership_pct'] for i in lu])), 1),
         })
 
+    # ── Portfolio analytics ──
+    sel_payouts = raw_payouts[selected_idx]  # (n_selected, n_sims)
+    portfolio_cost = entry_fee * len(selected_idx)
+
+    # Portfolio return per sim: total payout - total cost
+    portfolio_returns_per_sim = sel_payouts.sum(axis=0) - portfolio_cost  # (n_sims,)
+    portfolio_roi_per_sim = portfolio_returns_per_sim / portfolio_cost * 100
+
+    port_mean_roi = float(portfolio_roi_per_sim.mean())
+    port_std = float(portfolio_roi_per_sim.std())
+    port_sharpe = port_mean_roi / port_std if port_std > 0 else 0.0
+
+    # Value at Risk (5th percentile loss)
+    var_5 = float(np.percentile(portfolio_returns_per_sim, 5))
+    var_1 = float(np.percentile(portfolio_returns_per_sim, 1))
+
+    # Player exposure
+    player_exposure = {}
+    for idx in selected_idx:
+        for pi in our_candidates[idx]:
+            name = players[pi]['name']
+            player_exposure[name] = player_exposure.get(name, 0) + 1
+
+    # Lineup correlation / diversification
+    # Average pairwise correlation of lineup payouts across sims
+    if len(selected_idx) > 1:
+        sel_normed = sel_payouts - sel_payouts.mean(axis=1, keepdims=True)
+        sel_std = sel_payouts.std(axis=1, keepdims=True)
+        sel_std = np.maximum(sel_std, 1e-6)
+        sel_normed = sel_normed / sel_std
+        corr_mat = (sel_normed @ sel_normed.T) / n_sims
+        # Average off-diagonal correlation
+        n_sel = len(selected_idx)
+        avg_lineup_corr = float((corr_mat.sum() - np.trace(corr_mat)) / (n_sel * (n_sel - 1)))
+        diversification_ratio = 1.0 - avg_lineup_corr
+    else:
+        avg_lineup_corr = 1.0
+        diversification_ratio = 0.0
+
+    portfolio_analytics = {
+        'portfolio_size': len(selected_idx),
+        'total_cost': portfolio_cost,
+        'expected_roi_pct': round(port_mean_roi, 2),
+        'portfolio_std_pct': round(port_std, 2),
+        'sharpe_ratio': round(port_sharpe, 4),
+        'var_5_pct': round(var_5, 2),
+        'var_1_pct': round(var_1, 2),
+        'avg_lineup_correlation': round(avg_lineup_corr, 4),
+        'diversification_ratio': round(diversification_ratio, 4),
+        'player_exposure': {name: {'count': cnt, 'pct': round(cnt / len(selected_idx) * 100, 1)}
+                           for name, cnt in sorted(player_exposure.items(), key=lambda x: -x[1])},
+    }
+
     output = {
         'metadata': {
             'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -456,6 +509,7 @@ def run():
                 'best_roi': round(float(roi.max()), 2),
                 'avg_cash_rate': round(float(cash_rate.mean()), 1),
             },
+            'portfolio_analytics': portfolio_analytics,
         },
     }
 

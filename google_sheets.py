@@ -81,7 +81,7 @@ def _contest_prefix(contest_profile):
 def export_to_sheets(event_name, lineups, projected_players,
                      contest_profile=None, contest_metrics=None,
                      contest_params=None, sim_results=None,
-                     sim_summary=None):
+                     sim_summary=None, portfolio_analytics=None):
     """Export optimizer output to the shared Google Sheet.
 
     Each contest gets its own set of tabs, prefixed by contest name
@@ -254,6 +254,42 @@ def export_to_sheets(event_name, lineups, projected_players,
         sim_ws.format(f"A{header_row}:J{header_row}", HEADER_FMT)
         if sim_summary:
             sim_ws.format("A1:J1", HEADER_FMT)
+
+    # ── Tab 6: Portfolio Analytics (if available) ──
+    if portfolio_analytics:
+        exposure = portfolio_analytics.get("player_exposure", {})
+        port_rows_count = max(len(exposure) + 20, 30)
+        port_ws = _get_or_create_worksheet(spreadsheet, tab("Portfolio"), port_rows_count, 6)
+
+        port_rows = []
+
+        # Portfolio summary metrics
+        port_rows.append(["PORTFOLIO SUMMARY", "", "", "", "", ""])
+        port_rows.append(["", "", "", "", "", ""])
+        port_rows.append(["Metric", "Value", "", "", "", ""])
+        port_rows.append(["Portfolio Size", f"{portfolio_analytics.get('portfolio_size', 0)} lineups", "", "", "", ""])
+        port_rows.append(["Total Cost", f"${portfolio_analytics.get('total_cost', 0):,.0f}", "", "", "", ""])
+        port_rows.append(["Expected ROI", f"{portfolio_analytics.get('expected_roi_pct', 0):.2f}%", "", "", "", ""])
+        port_rows.append(["Std Deviation", f"{portfolio_analytics.get('portfolio_std_pct', 0):.2f}%", "", "", "", ""])
+        port_rows.append(["Sharpe Ratio", f"{portfolio_analytics.get('sharpe_ratio', 0):.4f}", "", "", "", ""])
+        port_rows.append(["VaR (5%)", f"${portfolio_analytics.get('var_5_pct', 0):,.2f}", "", "", "", ""])
+        port_rows.append(["VaR (1%)", f"${portfolio_analytics.get('var_1_pct', 0):,.2f}", "", "", "", ""])
+        port_rows.append(["Avg Lineup Correlation", f"{portfolio_analytics.get('avg_lineup_correlation', 0):.4f}", "", "", "", ""])
+        port_rows.append(["Diversification Ratio", f"{portfolio_analytics.get('diversification_ratio', 0):.4f}", "", "", "", ""])
+        port_rows.append(["", "", "", "", "", ""])
+
+        # Player exposure table
+        port_rows.append(["PLAYER EXPOSURE", "", "", "", "", ""])
+        port_rows.append(["Player", "Lineups", "Exposure %", "", "", ""])
+
+        for name, data in exposure.items():
+            port_rows.append([name, data["count"], f"{data['pct']:.1f}%", "", "", ""])
+
+        port_ws.update(port_rows, value_input_option="RAW")
+        port_ws.format("A1:F1", HEADER_FMT)
+        port_ws.format("A3:F3", HEADER_FMT)
+        port_ws.format(f"A{14}:F{14}", HEADER_FMT)
+        port_ws.format(f"A{15}:F{15}", HEADER_FMT)
 
     # Clean up default Sheet1 if it exists
     try:

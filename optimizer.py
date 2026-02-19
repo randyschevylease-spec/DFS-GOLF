@@ -215,6 +215,7 @@ def main():
             })
 
         sim_summary = pipeline_data.get("large_gpp", {}).get("simulation_summary", {})
+        portfolio_analytics = pipeline_data.get("large_gpp", {}).get("portfolio_analytics", None)
 
         print(f"  Lineups: {len(lineups)} | Players: {len(projected_players)}")
 
@@ -254,6 +255,7 @@ def main():
                     contest_profile=pipeline_contest_profile,
                     sim_results=sim_results,
                     sim_summary=sim_summary,
+                    portfolio_analytics=portfolio_analytics,
                 )
                 print(f"  Google Sheet: {sheet_url}")
             except Exception as e:
