@@ -14,7 +14,7 @@ from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE, CVAR_LAM
 
 # ── Step 1: Generate Contest Field ──────────────────────────────────────────
 
-def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000):
+def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, seed=None):
     """Generate opponent lineups calibrated to DataGolf projected ownership.
 
     Uses iterative Dirichlet-multinomial sampling with pilot-based calibration
@@ -25,10 +25,12 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000):
         field_size: total opponent lineups to generate
         calibration_rounds: iterations of pilot → measure → adjust
         pilot_size: lineups per calibration pilot batch
+        seed: random seed for reproducibility
 
     Returns:
         list of lineups, each a list of player indices
     """
+    rng = np.random.default_rng(seed)
     n = len(players)
     min_sal = min(p["salary"] for p in players)
 
@@ -42,7 +44,7 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000):
 
     # Iterative calibration: measure actual ownership, adjust to converge on targets
     for rnd in range(calibration_rounds):
-        pilot = _sample_lineups(players, min(pilot_size, field_size), adjusted_probs, alpha_scale, min_sal)
+        pilot = _sample_lineups(players, min(pilot_size, field_size), adjusted_probs, alpha_scale, min_sal, rng=rng)
         if not pilot:
             break
 
@@ -60,12 +62,14 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000):
         adjusted_probs /= adjusted_probs.sum()
 
     # Generate full field with calibrated probabilities
-    lineups = _sample_lineups(players, field_size, adjusted_probs, alpha_scale, min_sal)
+    lineups = _sample_lineups(players, field_size, adjusted_probs, alpha_scale, min_sal, rng=rng)
     return lineups
 
 
-def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal):
+def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
     """Sample salary-valid lineups using Dirichlet-multinomial."""
+    if rng is None:
+        rng = np.random.default_rng()
     n = len(players)
     alpha = np.maximum(probs * alpha_scale * n, 0.01)
     salaries = [p["salary"] for p in players]
@@ -75,7 +79,7 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal):
     while len(lineups) < n_lineups and attempts < n_lineups * 15:
         attempts += 1
         try:
-            draw = np.random.dirichlet(alpha)
+            draw = rng.dirichlet(alpha)
         except Exception:
             draw = probs
 
@@ -103,7 +107,7 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal):
             vp /= vp_sum
 
             try:
-                c = np.random.choice(n, p=vp)
+                c = rng.choice(n, p=vp)
             except Exception:
                 ok = False
                 break
@@ -159,8 +163,8 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
-    # Build covariance matrix (baseline correlation = 0.04 for shared conditions)
-    base_corr = 0.04
+    # Build covariance matrix (baseline correlation = 0.07 for shared conditions)
+    base_corr = 0.07
     cov = np.outer(sigmas, sigmas) * base_corr
     np.fill_diagonal(cov, sigmas ** 2)
 
@@ -358,26 +362,49 @@ def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
 
 # ── Candidate Generation ──────────────────────────────────────────────────
 
-def generate_candidates(players, pool_size=5000, noise_scale=0.15):
-    """Generate diverse candidate lineups via randomized MIP solves.
+def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
+                        min_proj_pct=0.85, candidate_exposure_cap=0.40):
+    """Generate diverse, high-quality candidate lineups via randomized MIP solves.
 
     Uses HiGHS for fast (~1ms/solve) binary integer programming with
-    multiplicative noise to explore the solution space.
+    multiplicative noise to explore the solution space. A projection floor
+    constraint ensures every candidate lineup is high-quality, and a post-
+    generation diversity filter caps per-player exposure in the candidate pool.
 
-    Returns list of unique lineups (each a tuple of sorted player indices).
+    Args:
+        players: list of player dicts
+        pool_size: target number of raw MIP solves
+        noise_scale: log-normal noise std dev for objective perturbation
+        seed: random seed
+        min_proj_pct: minimum lineup projection as fraction of optimal (0.85 = 85%)
+        candidate_exposure_cap: max fraction of final candidates any player can appear in
+
+    Returns list of unique lineups (each a list of sorted player indices).
     """
     n = len(players)
-    base_obj = np.array([p.get("projected_points", 0) for p in players])
-    rng = np.random.default_rng()
+    # Use leverage-adjusted mip_value if available, otherwise projected_points
+    base_obj = np.array([p.get("mip_value", p.get("projected_points", 0)) for p in players])
+    proj_pts = np.array([p.get("projected_points", 0) for p in players], dtype=np.float64)
+    rng = np.random.default_rng(seed)
     candidate_set = set()
 
-    # Phase 1: Projection-based with noise
+    # Solve optimal lineup to establish projection quality floor
+    optimal = _solve_mip(players, base_obj)
+    proj_floor = None
+    if optimal is not None and min_proj_pct > 0:
+        max_proj = sum(proj_pts[i] for i in optimal)
+        proj_floor = max_proj * min_proj_pct
+        print(f"    Projection floor: {proj_floor:.1f} pts ({min_proj_pct:.0%} of optimal {max_proj:.1f})")
+
+    # Phase 1: Projection-based with noise (increased for more exploration)
+    phase1_noise = noise_scale * 1.3  # more exploration; floor constraint keeps quality
     batch = 1000
     for batch_start in range(0, pool_size, batch):
         before = len(candidate_set)
         for _ in range(min(batch, pool_size - batch_start)):
-            noise = np.exp(rng.normal(0.0, noise_scale, size=n))
-            sel = _solve_mip(players, base_obj * noise)
+            noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
+            sel = _solve_mip(players, base_obj * noise,
+                             proj_pts=proj_pts, proj_floor=proj_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -390,10 +417,11 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15):
     top = sorted(range(n), key=lambda i: base_obj[i], reverse=True)[:12]
     for excluded in top:
         for _ in range(100):
-            noise = np.exp(rng.normal(0.0, noise_scale, size=n))
+            noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
             obj = base_obj * noise
             obj[excluded] = -1e6
-            sel = _solve_mip(players, obj)
+            sel = _solve_mip(players, obj,
+                             proj_pts=proj_pts, proj_floor=proj_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -401,19 +429,96 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15):
     for i in range(min(6, len(top))):
         for j in range(i + 1, min(8, len(top))):
             for _ in range(30):
-                noise = np.exp(rng.normal(0.0, noise_scale * 1.2, size=n))
+                noise = np.exp(rng.normal(0.0, noise_scale * 1.5, size=n))
                 obj = base_obj * noise
                 obj[top[i]] = -1e6
                 obj[top[j]] = -1e6
-                sel = _solve_mip(players, obj)
+                sel = _solve_mip(players, obj,
+                                 proj_pts=proj_pts, proj_floor=proj_floor)
                 if sel is not None:
                     candidate_set.add(sel)
 
-    return [list(c) for c in candidate_set]
+    # Phase 4: Salary-tier diversification
+    salaries = np.array([float(p["salary"]) for p in players])
+    tier_count = max(200, pool_size // 5)
+
+    # Stars & scrubs: 2 players >= $9K, 4 players < $7.5K
+    high_idx = np.where(salaries >= 9000)[0]
+    low_idx = np.where(salaries < 7500)[0]
+    if len(high_idx) >= 2 and len(low_idx) >= 4:
+        for _ in range(tier_count):
+            obj = base_obj * np.exp(rng.normal(0.0, noise_scale * 1.5, size=n))
+            # Heavily penalize mid-range players
+            mid_mask = (salaries >= 7500) & (salaries < 9000)
+            obj[mid_mask] *= 0.3
+            sel = _solve_mip(players, obj,
+                             proj_pts=proj_pts, proj_floor=proj_floor)
+            if sel is not None:
+                candidate_set.add(sel)
+
+    # Balanced: all players $7K-$9K
+    mid_idx = np.where((salaries >= 7000) & (salaries <= 9000))[0]
+    if len(mid_idx) >= ROSTER_SIZE:
+        for _ in range(tier_count):
+            obj = base_obj * np.exp(rng.normal(0.0, noise_scale * 1.5, size=n))
+            # Penalize extremes
+            extreme_mask = (salaries < 7000) | (salaries > 9000)
+            obj[extreme_mask] *= 0.3
+            sel = _solve_mip(players, obj,
+                             proj_pts=proj_pts, proj_floor=proj_floor)
+            if sel is not None:
+                candidate_set.add(sel)
+
+    raw_count = len(candidate_set)
+
+    # Diversity filter: cap per-player exposure in candidate pool
+    all_candidates = list(candidate_set)
+    if candidate_exposure_cap < 1.0 and len(all_candidates) > 100:
+        all_candidates = _diversity_filter(all_candidates, proj_pts, n,
+                                           candidate_exposure_cap)
+        print(f"    Candidates: {raw_count} raw → {len(all_candidates)} after diversity filter "
+              f"(exposure cap {candidate_exposure_cap:.0%})")
+    else:
+        print(f"    Candidates: {len(all_candidates)}")
+
+    return [list(c) for c in all_candidates]
 
 
-def _solve_mip(players, obj):
-    """Solve a single lineup MIP using HiGHS."""
+def _diversity_filter(candidates, proj_pts, n_players, exposure_cap):
+    """Greedy diversity filter: keep highest-projection candidates first,
+    skipping any that would push a player over the exposure cap.
+
+    This ensures the candidate pool has both high quality AND low concentration
+    on any single player.
+    """
+    target_size = len(candidates)
+    max_appearances = max(10, int(target_size * exposure_cap))
+
+    # Sort by total projected points descending (keep best first)
+    scored = [(sum(proj_pts[i] for i in c), c) for c in candidates]
+    scored.sort(reverse=True)
+
+    appearances = np.zeros(n_players, dtype=np.int32)
+    filtered = []
+
+    for proj, cand in scored:
+        if all(appearances[i] < max_appearances for i in cand):
+            filtered.append(cand)
+            for i in cand:
+                appearances[i] += 1
+
+    return filtered
+
+
+def _solve_mip(players, obj, proj_pts=None, proj_floor=None):
+    """Solve a single lineup MIP using HiGHS.
+
+    Args:
+        players: list of player dicts
+        obj: objective coefficients (one per player)
+        proj_pts: array of projected points per player (for floor constraint)
+        proj_floor: minimum total projected points for the lineup
+    """
     n = len(players)
     h = Highs()
     h.silent()
@@ -429,6 +534,11 @@ def _solve_mip(players, obj):
     # Salary bounds
     salaries = np.array([float(p["salary"]) for p in players])
     h.addRow(float(SALARY_FLOOR), float(SALARY_CAP), n, np.arange(n, dtype=np.int32), salaries)
+
+    # Minimum projection floor (ensures lineup quality)
+    if proj_pts is not None and proj_floor is not None:
+        h.addRow(float(proj_floor), float(1e9), n, np.arange(n, dtype=np.int32),
+                 proj_pts.astype(np.float64))
 
     h.run()
     if h.getModelStatus() != HighsModelStatus.kOptimal:
