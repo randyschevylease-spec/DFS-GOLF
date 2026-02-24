@@ -252,6 +252,8 @@ def main():
     parser.add_argument("--sims", type=int, default=10000, help="Monte Carlo simulations")
     parser.add_argument("--field-size", type=int, default=None, help="Sim field size")
     parser.add_argument("--sheets", action="store_true", help="Export to Google Sheets")
+    parser.add_argument("--salary-csv", type=str, default=None,
+                        help="Path to DK salary CSV (default: auto-detect)")
     args = parser.parse_args()
 
     start_time = time.time()
@@ -346,7 +348,10 @@ def main():
 
     # ── Build players ──
     print(f"\n  Loading DK salaries...")
-    salary_csv = os.path.join(base, "salaries", "DKSalaries_2025_Masters.csv")
+    if args.salary_csv:
+        salary_csv = args.salary_csv
+    else:
+        salary_csv = os.path.join(base, "salaries", "DKSalaries.csv")
     dk_salaries = load_dk_salaries(salary_csv)
     print(f"  DK salary entries: {len(dk_salaries)}")
 
