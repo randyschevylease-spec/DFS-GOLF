@@ -3,7 +3,7 @@
 
 Step 1: Generate contest field from DataGolf projected ownership
 Step 2: Calculate ROI for every candidate lineup against that field
-Step 3: Select the best portfolio of N lineups on the efficient frontier
+Step 3: Select the best portfolio of N lineups via marginal E[max] selection
 
 Usage:
     python run.py --contest 188100564               # Full run with real DK payout table
@@ -19,7 +19,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, NUM_LINEUPS
+from config import ROSTER_SIZE, SALARY_CAP, NUM_LINEUPS, MAX_EXPOSURE, CVAR_LAMBDA
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
 from dk_salaries import find_latest_csv, parse_dk_csv, match_players_exact  # kept for optional CSV override
 from dk_contests import fetch_contest, fetch_golf_contests, format_contest_list
@@ -45,6 +45,8 @@ def main():
                         help="Opponent field size (default: from contest)")
     parser.add_argument("--sheets", action="store_true",
                         help="Export to Google Sheets")
+    parser.add_argument("--cvar-lambda", type=float, default=None,
+                        help=f"CVaR tail-risk penalty (0=pure upside, 0.5=balanced, default: {CVAR_LAMBDA})")
     args = parser.parse_args()
 
     # ── List contests ──
@@ -202,12 +204,15 @@ def main():
     # ══════════════════════════════════════════════════════════════════
     # STEP 3: Select Portfolio
     # ══════════════════════════════════════════════════════════════════
+    cvar_lam = args.cvar_lambda if args.cvar_lambda is not None else CVAR_LAMBDA
     print(f"\n{'='*70}")
-    print(f"  STEP 3: Select best {n_lineups} lineups (EV + γ-diversification)")
-    print(f"  (Haugh & Singal 2019: max overlap γ = {max(ROSTER_SIZE - 3, 1)} players)")
+    print(f"  STEP 3: Select best {n_lineups} lineups (marginal E[max] + CVaR penalty)")
+    print(f"  Max exposure: {int(MAX_EXPOSURE * 100)}% ({int(n_lineups * MAX_EXPOSURE)} appearances)  "
+          f"CVaR λ={cvar_lam:.2f}")
     print(f"{'='*70}")
 
-    selected = select_portfolio(payouts, entry_fee, n_lineups, candidates)
+    selected = select_portfolio(payouts, entry_fee, n_lineups, candidates,
+                                n_players=len(players), cvar_lambda=cvar_lam)
 
     # Build output lineups
     lineups = []

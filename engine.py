@@ -3,12 +3,13 @@
 Step 1: Generate a contest field from DataGolf projected ownership.
 Step 2: Score every candidate lineup against that field via Monte Carlo,
         assign payouts from the real DK payout table, compute ROI.
-Step 3: Select the best portfolio of N lineups maximizing portfolio Sharpe.
+Step 3: Select the best portfolio of N lineups maximizing E[max(portfolio)]
+        via greedy marginal-contribution selection with exposure caps.
 """
 import math
 import numpy as np
 from highspy import Highs, ObjSense, HighsModelStatus
-from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
+from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE, CVAR_LAMBDA
 
 
 # ── Step 1: Generate Contest Field ──────────────────────────────────────────
@@ -230,82 +231,127 @@ def _get_sigma(player):
 
 # ── Step 3: Select Portfolio ───────────────────────────────────────────────
 
-def select_portfolio(payouts, entry_fee, n_select, candidates, max_overlap=None):
-    """Greedy portfolio construction per Haugh & Singal (2019), Algorithm 7.
+def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
+                     max_exposure=None, cvar_lambda=None):
+    """Greedy marginal-contribution portfolio selection with CVaR tail penalty.
 
-    For top-heavy (GPP) contests, the paper shows that:
-    1. When out-of-the-money, you want BOTH high mean AND high variance
-    2. Sharpe (mean/std) is wrong — it penalizes variance
-    3. Maximize expected reward R(W* ∪ w) with forced diversification
-    4. γ = C-3 overlap constraint between any pair of entries
+    Objective per round:
+        score = E[max improvement] + λ × E[payout in worst 5% of sims]
 
-    At each step, pick the highest-EV candidate that satisfies the overlap
-    constraint (at most γ shared players) with all previously selected lineups.
+    The first term (upside) picks lineups that win in sims where the
+    existing portfolio loses. The second term (CVaR) rewards lineups
+    that cash in the portfolio's worst outcomes — insurance against
+    total wipeout.
 
     Args:
         payouts: (n_candidates, n_sims) array of dollar payouts
         entry_fee: cost per lineup entry
         n_select: number of lineups to select
         candidates: list of candidate lineups (each a list of player indices)
-        max_overlap: max shared players between any pair (default: ROSTER_SIZE - 3)
+        n_players: total number of players (for exposure tracking)
+        max_exposure: max fraction of lineups a player can appear in
+        cvar_lambda: tail-risk penalty weight (0=pure upside, 0.5=balanced)
 
     Returns:
         list of selected candidate indices
     """
     n_candidates, n_sims = payouts.shape
 
-    if max_overlap is None:
-        max_overlap = max(ROSTER_SIZE - 3, 1)  # γ = C-3 from the paper
+    if max_exposure is None:
+        max_exposure = MAX_EXPOSURE
+    if cvar_lambda is None:
+        cvar_lambda = CVAR_LAMBDA
 
-    # Rank candidates by expected reward (descending)
-    mean_payouts = payouts.mean(axis=1)
-    order = np.argsort(-mean_payouts)
+    max_appearances = max(1, int(n_select * max_exposure))
+    tail_count = max(1, int(n_sims * 0.05))  # bottom 5% of sims for CVaR
 
-    # Pre-build candidate lineup sets for fast overlap checking
-    cand_sets = [set(candidates[i]) for i in range(n_candidates)]
+    # Build player → candidate index for fast exposure removal
+    player_to_cands = [[] for _ in range(n_players)]
+    for ci, lineup in enumerate(candidates):
+        for pidx in lineup:
+            player_to_cands[pidx].append(ci)
+
+    alive = np.ones(n_candidates, dtype=bool)
+    running_max = np.full(n_sims, -np.inf, dtype=np.float64)
+    appearances = np.zeros(n_players, dtype=np.int32)
 
     selected = []
-    selected_sets = []
-
     port_returns = np.zeros(n_sims, dtype=np.float64)
 
-    for idx in order:
-        if len(selected) >= n_select:
+    mean_payouts = payouts.mean(axis=1)
+
+    # Pre-allocate scratch arrays for the hot loop
+    improvement = np.empty((n_candidates, n_sims), dtype=np.float64)
+    upside_buf = np.empty(n_candidates, dtype=np.float64)
+    score_buf = np.empty(n_candidates, dtype=np.float64)
+
+    # Tail weight vector for fast CVaR via matmul: payouts @ tail_w
+    tail_w = np.zeros(n_sims, dtype=np.float64)
+
+    for rnd in range(n_select):
+        if not alive.any():
+            print(f"  Warning: candidate pool exhausted at {len(selected)}/{n_select}")
             break
 
-        lineup_set = cand_sets[idx]
+        # ── Upside: marginal E[max] improvement ──
+        np.subtract(payouts, running_max, out=improvement)
+        np.maximum(improvement, 0.0, out=improvement)
+        np.divide(improvement.sum(axis=1), n_sims, out=upside_buf)
 
-        # Check overlap constraint with all previously selected
-        ok = True
-        for prev_set in selected_sets:
-            if len(lineup_set & prev_set) > max_overlap:
-                ok = False
-                break
+        # ── Downside: CVaR tail contribution ──
+        if cvar_lambda > 0:
+            # Identify the worst 5% of sims by current portfolio P&L
+            tail_idx = np.argpartition(port_returns, tail_count)[:tail_count]
 
-        if not ok:
-            continue
+            # Build weight vector: 1/tail_count at tail positions, 0 elsewhere
+            tail_w[:] = 0.0
+            tail_w[tail_idx] = 1.0 / tail_count
 
-        selected.append(int(idx))
-        selected_sets.append(lineup_set)
+            # Each candidate's mean payout in tail sims (via single BLAS call)
+            # score_buf = payouts @ tail_w  →  (n_candidates,)
+            np.dot(payouts, tail_w, out=score_buf)
+            score_buf -= entry_fee  # net contribution: payout - cost
 
-        # Update running portfolio
-        port_returns = port_returns + payouts[idx] - entry_fee
-        port_mean = float(port_returns.mean())
-        port_roi = port_mean / (len(selected) * entry_fee) * 100
+            # Combined: upside + λ × tail_contribution
+            score_buf *= cvar_lambda
+            score_buf += upside_buf
+        else:
+            score_buf[:] = upside_buf
+
+        # Mask dead candidates
+        score_buf[~alive] = -np.inf
+
+        # Select the candidate with highest combined score
+        best_idx = int(np.argmax(score_buf))
+        best_score = float(score_buf[best_idx])
+        best_upside = float(upside_buf[best_idx])
+
+        selected.append(best_idx)
+
+        # Update running max
+        np.maximum(running_max, payouts[best_idx], out=running_max)
+
+        # Update portfolio returns
+        port_returns = port_returns + payouts[best_idx] - entry_fee
+        port_roi = float(port_returns.mean()) / (len(selected) * entry_fee) * 100
+
+        # Remove this candidate from the pool
+        alive[best_idx] = False
+
+        # Update exposure counts and remove over-exposed players' candidates
+        lineup = candidates[best_idx]
+        for pidx in lineup:
+            appearances[pidx] += 1
+            if appearances[pidx] >= max_appearances:
+                for ci in player_to_cands[pidx]:
+                    alive[ci] = False
 
         if len(selected) % 25 == 0 or len(selected) == n_select:
+            tail_mean = float(port_returns[tail_idx].mean()) if cvar_lambda > 0 else 0
             print(f"    [{len(selected)}/{n_select}] ROI={port_roi:+.1f}%  "
-                  f"EV=${mean_payouts[idx]:.2f}")
-
-    if len(selected) < n_select:
-        print(f"  Warning: only found {len(selected)}/{n_select} lineups with "
-              f"γ={max_overlap} overlap constraint. Relaxing...")
-        # Relax constraint and fill remaining slots
-        for idx in order:
-            if len(selected) >= n_select:
-                break
-            if int(idx) not in selected:
-                selected.append(int(idx))
+                  f"Upside=${best_upside:.2f}  "
+                  f"CVaR₅=${tail_mean:+,.0f}  "
+                  f"Alive={int(alive.sum()):,}")
 
     return selected
 

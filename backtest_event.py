@@ -403,10 +403,11 @@ def main():
     # STEP 3: Select Portfolio
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
-    print(f"  STEP 3: Select best {n_lineups} lineups (EV + γ-diversification)")
+    print(f"  STEP 3: Select best {n_lineups} lineups (marginal E[max] + exposure caps)")
     print(f"{'='*70}")
 
-    selected = select_portfolio(payouts_matrix, entry_fee, n_lineups, candidates)
+    selected = select_portfolio(payouts_matrix, entry_fee, n_lineups, candidates,
+                                n_players=len(players))
 
     lineups = []
     for sel_idx in selected:

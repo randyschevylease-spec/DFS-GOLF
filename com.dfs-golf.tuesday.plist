@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dfs-golf.tuesday</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/rhbot/Desktop/dfs-golf/run_tuesday.sh</string>
+    </array>
+
+    <!-- Run Tuesday Feb 25 at 3:00 PM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>2</integer>
+        <key>Hour</key>
+        <integer>15</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/rhbot/Desktop/dfs-golf/history/tuesday_run.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/rhbot/Desktop/dfs-golf/history/tuesday_err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/rhbot/Desktop/dfs-golf</string>
+</dict>
+</plist>
