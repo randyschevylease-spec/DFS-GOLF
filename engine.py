@@ -9,7 +9,9 @@ Step 3: Select the best portfolio of N lineups maximizing E[max(portfolio)]
 import math
 import numpy as np
 from highspy import Highs, ObjSense, HighsModelStatus
-from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE, CVAR_LAMBDA
+from config import (ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE, CVAR_LAMBDA,
+                     BASE_CORRELATION, PORTFOLIO_METHOD, MPT_FRONTIER_TOLERANCE,
+                     MPT_MIN_FRONTIER_SIZE, MPT_SIGMA_BINS, MPT_FRONTIER_MAX)
 
 
 # ── Step 1: Generate Contest Field ──────────────────────────────────────────
@@ -67,16 +69,21 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, s
 
 
 def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
-    """Sample salary-valid lineups using Dirichlet-multinomial."""
+    """Sample salary-valid lineups using Dirichlet-multinomial.
+
+    Enforces SALARY_FLOOR to match real DK optimizer behavior (players use
+    nearly all of their cap). Last 2 slots bias toward higher-salary players
+    when budget remains, pushing lineups toward $49.5K-$50K usage.
+    """
     if rng is None:
         rng = np.random.default_rng()
     n = len(players)
     alpha = np.maximum(probs * alpha_scale * n, 0.01)
-    salaries = [p["salary"] for p in players]
+    sal_arr = np.array([p["salary"] for p in players], dtype=np.float64)
     lineups = []
 
     attempts = 0
-    while len(lineups) < n_lineups and attempts < n_lineups * 15:
+    while len(lineups) < n_lineups and attempts < n_lineups * 25:
         attempts += 1
         try:
             draw = rng.dirichlet(alpha)
@@ -93,13 +100,27 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
             min_remaining = remaining_slots * min_sal
             max_affordable = budget - min_remaining
 
-            afford = np.array([salaries[i] <= max_affordable for i in range(n)])
+            # Floor-aware: need enough salary to hit SALARY_FLOOR
+            spent = SALARY_CAP - budget
+            floor_remaining = SALARY_FLOOR - spent
+            min_this_slot = max(min_sal, (floor_remaining - remaining_slots * max(sal_arr)) if remaining_slots > 0
+                                else floor_remaining)
+
+            afford = (sal_arr <= max_affordable) & (sal_arr >= min_sal)
             valid = avail & afford
             if not valid.any():
                 ok = False
                 break
 
             vp = draw * valid
+
+            # Salary-filling bias: real DK users optimize to use their full cap.
+            # Weight = (salary / min_salary)^power — monotonically prefers
+            # expensive players. Power increases in later slots to aggressively
+            # spend remaining budget rather than waste it.
+            sal_weight = (sal_arr / min_sal) ** (5.0 + slot * 1.5)
+            vp = vp * sal_weight * valid
+
             vp_sum = vp.sum()
             if vp_sum <= 0:
                 ok = False
@@ -113,12 +134,12 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
                 break
 
             selected.append(c)
-            budget -= salaries[c]
+            budget -= sal_arr[c]
             avail[c] = False
 
         if ok and len(selected) == ROSTER_SIZE:
-            total_sal = sum(salaries[i] for i in selected)
-            if total_sal <= SALARY_CAP:
+            total_sal = sal_arr[selected].sum()
+            if SALARY_FLOOR <= total_sal <= SALARY_CAP:
                 lineups.append(selected)
 
     return lineups
@@ -163,8 +184,8 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
-    # Build covariance matrix (baseline correlation = 0.07 for shared conditions)
-    base_corr = 0.07
+    # Build covariance matrix (baseline correlation for shared conditions)
+    base_corr = BASE_CORRELATION
     cov = np.outer(sigmas, sigmas) * base_corr
     np.fill_diagonal(cov, sigmas ** 2)
 
@@ -223,20 +244,31 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
     return payouts, roi
 
 
+def empirical_sigma_from_projection(proj):
+    """Quadratic fit from 4,746 calibration records: non-monotonic σ(proj).
+
+    Low variance for longshots (mostly miss cut), peak variance for mid-field
+    (boom-or-bust), compressed variance for favorites.
+    Peak σ ≈ 29 at proj ≈ 57.
+    """
+    sigma = -0.01455 * proj**2 + 1.6622 * proj - 18.86
+    return max(sigma, 5.0)
+
+
 def _get_sigma(player):
     """Get player score standard deviation."""
     sd = player.get("std_dev", 0)
     if sd and sd > 0:
         return max(sd, 5.0)
-    # Heuristic fallback
+    # Empirical fallback from calibration data
     proj = player.get("projected_points", 50)
-    return max(proj * 0.35, 5.0)
+    return empirical_sigma_from_projection(proj)
 
 
 # ── Step 3: Select Portfolio ───────────────────────────────────────────────
 
-def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
-                     max_exposure=None, cvar_lambda=None):
+def select_portfolio_emax(payouts, entry_fee, n_select, candidates, n_players,
+                          max_exposure=None, cvar_lambda=None):
     """Greedy marginal-contribution portfolio selection with CVaR tail penalty.
 
     Objective per round:
@@ -360,10 +392,159 @@ def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
     return selected
 
 
+def select_portfolio_mpt(payouts, entry_fee, n_select, candidates, n_players,
+                         max_exposure=None, cvar_lambda=None):
+    """MPT efficient-frontier portfolio selection maximizing Sharpe ratio.
+
+    1. Compute per-lineup mean profit and std dev from payouts matrix.
+    2. Filter to efficient frontier via binned upper-envelope Sharpe sweep.
+    3. Greedy selection: each round picks the lineup that maximizes portfolio
+       Sharpe ratio using incremental variance with covariance tracking.
+
+    Same signature as select_portfolio_emax — drop-in replacement.
+    """
+    n_candidates, n_sims = payouts.shape
+
+    if max_exposure is None:
+        max_exposure = MAX_EXPOSURE
+
+    max_appearances = max(1, int(n_select * max_exposure))
+
+    # ── Per-lineup stats ──
+    profits = payouts - entry_fee                       # (n_candidates, n_sims)
+    mu = profits.mean(axis=1)                           # mean profit
+    sigma = profits.std(axis=1, ddof=0)                 # std dev
+    sigma = np.maximum(sigma, 1e-9)                     # avoid div-by-zero
+    sharpe = mu / sigma                                 # per-lineup Sharpe
+
+    # ── Efficient frontier filter ──
+    # Bin by sigma, keep only lineups near the upper Sharpe envelope
+    sigma_min, sigma_max = sigma.min(), sigma.max()
+    bin_edges = np.linspace(sigma_min, sigma_max, MPT_SIGMA_BINS + 1)
+    bin_idx = np.digitize(sigma, bin_edges) - 1
+    bin_idx = np.clip(bin_idx, 0, MPT_SIGMA_BINS - 1)
+
+    # Upper envelope: best Sharpe in each bin
+    best_sharpe = np.full(MPT_SIGMA_BINS, -np.inf)
+    for b in range(MPT_SIGMA_BINS):
+        mask = bin_idx == b
+        if mask.any():
+            best_sharpe[b] = sharpe[mask].max()
+
+    # Fill gaps: propagate best from neighboring bins
+    for b in range(1, MPT_SIGMA_BINS):
+        best_sharpe[b] = max(best_sharpe[b], best_sharpe[b - 1])
+
+    # Keep lineups within tolerance of envelope
+    envelope_sharpe = best_sharpe[bin_idx]
+    frontier_mask = sharpe >= (envelope_sharpe - MPT_FRONTIER_TOLERANCE)
+
+    # Ensure minimum frontier size by relaxing tolerance if needed
+    n_frontier = int(frontier_mask.sum())
+    if n_frontier < MPT_MIN_FRONTIER_SIZE:
+        # Fall back: take top candidates by Sharpe
+        n_take = min(MPT_MIN_FRONTIER_SIZE, n_candidates)
+        top_idx = np.argpartition(-sharpe, n_take)[:n_take]
+        frontier_mask[:] = False
+        frontier_mask[top_idx] = True
+        n_frontier = n_take
+
+    # Hard cap on frontier size
+    if n_frontier > MPT_FRONTIER_MAX:
+        frontier_indices = np.where(frontier_mask)[0]
+        top_idx = frontier_indices[np.argpartition(-sharpe[frontier_indices], MPT_FRONTIER_MAX)[:MPT_FRONTIER_MAX]]
+        frontier_mask[:] = False
+        frontier_mask[top_idx] = True
+        n_frontier = MPT_FRONTIER_MAX
+
+    frontier_idx = np.where(frontier_mask)[0]
+    print(f"  MPT frontier: {n_frontier} lineups from {n_candidates} candidates "
+          f"(Sharpe range {sharpe[frontier_idx].min():.3f} – {sharpe[frontier_idx].max():.3f})")
+
+    # ── Covariance matrix on frontier profits ──
+    frontier_profits = profits[frontier_idx]             # (n_frontier, n_sims)
+    cov_matrix = np.cov(frontier_profits, ddof=0)        # (n_frontier, n_frontier)
+    if cov_matrix.ndim == 0:
+        cov_matrix = cov_matrix.reshape(1, 1)
+
+    frontier_mu = mu[frontier_idx]
+    frontier_var = np.diag(cov_matrix).copy()
+
+    # Build player → frontier index for fast exposure removal
+    player_to_frontier = [[] for _ in range(n_players)]
+    for fi, ci in enumerate(frontier_idx):
+        for pidx in candidates[ci]:
+            player_to_frontier[pidx].append(fi)
+
+    alive = np.ones(n_frontier, dtype=bool)
+    appearances = np.zeros(n_players, dtype=np.int32)
+    selected = []
+
+    # Incremental tracking
+    port_mean = 0.0
+    port_var = 0.0
+    cov_sum = np.zeros(n_frontier, dtype=np.float64)     # sum of cov with selected
+
+    for rnd in range(n_select):
+        if not alive.any():
+            print(f"  Warning: frontier pool exhausted at {len(selected)}/{n_select}")
+            break
+
+        # New portfolio variance and Sharpe if we add each candidate
+        new_var = port_var + frontier_var + 2.0 * cov_sum
+        new_mean = port_mean + frontier_mu
+        new_std = np.sqrt(np.maximum(new_var, 1e-18))
+        new_sharpe = new_mean / new_std
+
+        # Mask dead candidates
+        new_sharpe[~alive] = -np.inf
+
+        best_fi = int(np.argmax(new_sharpe))
+        selected.append(int(frontier_idx[best_fi]))
+
+        # Update incremental tracking
+        port_mean += frontier_mu[best_fi]
+        port_var = float(new_var[best_fi])
+        cov_sum += cov_matrix[best_fi]
+
+        # Mark as used
+        alive[best_fi] = False
+
+        # Update exposure counts and remove over-exposed players' candidates
+        lineup = candidates[frontier_idx[best_fi]]
+        for pidx in lineup:
+            appearances[pidx] += 1
+            if appearances[pidx] >= max_appearances:
+                for fi in player_to_frontier[pidx]:
+                    alive[fi] = False
+
+        if len(selected) % 25 == 0 or len(selected) == n_select:
+            port_std = math.sqrt(max(port_var, 1e-18))
+            port_sharpe = port_mean / port_std
+            port_roi = port_mean / (len(selected) * entry_fee) * 100
+            print(f"    [{len(selected)}/{n_select}] ROI={port_roi:+.1f}%  "
+                  f"Sharpe={port_sharpe:.3f}  "
+                  f"Alive={int(alive.sum()):,}")
+
+    return selected
+
+
+def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
+                     max_exposure=None, cvar_lambda=None):
+    """Dispatcher: routes to MPT or E[max] based on PORTFOLIO_METHOD config."""
+    if PORTFOLIO_METHOD == "mpt":
+        return select_portfolio_mpt(payouts, entry_fee, n_select, candidates,
+                                    n_players, max_exposure=max_exposure)
+    else:
+        return select_portfolio_emax(payouts, entry_fee, n_select, candidates,
+                                     n_players, max_exposure=max_exposure,
+                                     cvar_lambda=cvar_lambda)
+
+
 # ── Candidate Generation ──────────────────────────────────────────────────
 
 def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
-                        min_proj_pct=0.85, candidate_exposure_cap=0.40):
+                        min_proj_pct=0.88, candidate_exposure_cap=0.40):
     """Generate diverse, high-quality candidate lineups via randomized MIP solves.
 
     Uses HiGHS for fast (~1ms/solve) binary integer programming with

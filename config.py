@@ -13,6 +13,7 @@ SALARY_FLOOR = 48000  # Minimum salary usage (96% of cap)
 
 # Multi-lineup exposure limit (max % of lineups a single player can appear in)
 MAX_EXPOSURE = 0.60
+BASE_CORRELATION = 0.11
 
 # CVaR tail-risk penalty (λ). Controls upside vs downside tradeoff:
 #   0.0  = pure E[max] — best for GPP (highest ROI, best diversification)
@@ -25,6 +26,13 @@ CVAR_LAMBDA = 0.0
 LEVERAGE_POWER = 0.35
 LEVERAGE_MULT_FLOOR = 0.70
 LEVERAGE_MULT_CAP = 1.50
+
+# Portfolio selection method
+PORTFOLIO_METHOD = "mpt"          # "mpt" or "emax"
+MPT_FRONTIER_TOLERANCE = 0.02     # Sharpe tolerance for near-frontier inclusion
+MPT_MIN_FRONTIER_SIZE = 200       # Minimum frontier candidates
+MPT_SIGMA_BINS = 50               # Risk bins for envelope sweep
+MPT_FRONTIER_MAX = 1500           # Hard cap on frontier size (bounds cov matrix)
 
 # Vegas line movement
 MOVEMENT_THRESHOLD_PCT = 5.0

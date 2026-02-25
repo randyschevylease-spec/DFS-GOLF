@@ -8,3 +8,11 @@ shared/
 history/
 lineups_*.csv
 lineups_*.csv.bak
+
+# Large generated field CSVs (regenerate with create_field.py)
+cognizant_*_field.csv
+cognizant_field.csv
+flopshot_*_field.csv
+masters_*_field.csv
+masters_*_review.csv
+field_portfolio.csv

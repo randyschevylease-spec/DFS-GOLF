@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, MAX_EXPOSURE, CVAR_LAMBDA
+from config import ROSTER_SIZE, SALARY_CAP, MAX_EXPOSURE, CVAR_LAMBDA, BASE_CORRELATION
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
 from dk_contests import fetch_contest, fetch_golf_contests
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma
@@ -93,7 +93,7 @@ def simulate_positions(candidates, opponents, players, n_sims=10000, seed=None):
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
     # Covariance with baseline correlation
-    base_corr = 0.07
+    base_corr = BASE_CORRELATION
     cov = np.outer(sigmas, sigmas) * base_corr
     np.fill_diagonal(cov, sigmas ** 2)
 

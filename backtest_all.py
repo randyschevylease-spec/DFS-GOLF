@@ -24,7 +24,7 @@ from functools import lru_cache
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE
-from engine import generate_field, generate_candidates, select_portfolio, _get_sigma
+from engine import generate_field, generate_candidates, select_portfolio, _get_sigma, empirical_sigma_from_projection
 from run_all import simulate_positions, build_payout_lookup, assign_payouts
 from backtest import _cached_get, CACHE_DIR
 from datagolf_client import _get
@@ -143,10 +143,67 @@ def load_fc_projections(event_id, year):
                         "salary": int(row.get("Salary", 0) or 0),
                         "own_proj": float(row.get("Own Proj", 0) or 0),
                         "ownership": float(row.get("Ownership", 0) or 0),
+                        "actual_pts": float(row.get("FPs", 0) or 0),
                     }
             return result if result else None
 
     return None
+
+
+def build_players_from_fc(event_id, year):
+    """Build player list entirely from FC data — no derived projections.
+
+    Uses FC Proj as projected_points, FC ownership for opponent field,
+    FC FPs as actual_dk_pts. No DataGolf projection model involved.
+
+    Returns:
+        players: list of player dicts (ready for engine.py), or None
+    """
+    fc_lookup = load_fc_projections(event_id, year)
+    if not fc_lookup:
+        return None
+
+    players = []
+    for name, fc in fc_lookup.items():
+        salary = fc["salary"]
+        proj = fc["fc_proj"]
+        actual = fc["actual_pts"]
+        if salary <= 0 or proj <= 0:
+            continue
+
+        # Ownership: prefer pre-tournament Own Proj, fall back to actual Ownership
+        own = fc["own_proj"] if fc["own_proj"] > 0 else fc["ownership"]
+
+        players.append({
+            "name": name,
+            "salary": salary,
+            "projected_points": round(proj, 2),
+            "std_dev": round(empirical_sigma_from_projection(proj), 1),
+            "proj_ownership": round(own, 2),
+            "actual_dk_pts": actual,
+            "value": round(proj / (salary / 1000), 2) if salary > 0 else 0,
+        })
+
+    if not players:
+        return None
+
+    players.sort(key=lambda p: p["projected_points"], reverse=True)
+
+    # Scale ownership to sum to ROSTER_SIZE * 100%
+    total_own = sum(p["proj_ownership"] for p in players)
+    if total_own > 0:
+        target_total = ROSTER_SIZE * 100
+        scale = target_total / total_own
+        for p in players:
+            p["proj_ownership"] = round(max(p["proj_ownership"] * scale, 0.1), 2)
+
+    # Apply ownership leverage for candidate generation
+    _apply_adaptive_leverage(players)
+
+    fc_count = sum(1 for p in players if p["projected_points"] > 0)
+    print(f"    FC data: {fc_count} players loaded directly from FantasyCruncher")
+
+    return players
 
 
 def load_fc_payout_table(event_id, year):

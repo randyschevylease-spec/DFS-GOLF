@@ -1,0 +1,72 @@
+Lineup #,G,G,G,G,G,G,Salary,Proj Pts,Proj ROI %,Geomean Own %
+386,Shane Lowry,Ryan Gerard,Rasmus Hojgaard,Rico Hoey,Adrien Dumont De Chassart,Mark Hubbard,49900,432.8,5.8,8.36
+1330,Shane Lowry,Ryan Gerard,Daniel Berger,Kristoffer Reitan,Tom Kim,Mark Hubbard,50000,429.1,0.1,9.56
+5698,Nicolai Hojgaard,Michael Thorbjornsen,Thorbjorn Olesen,Kristoffer Reitan,Ricky Castillo,Dylan Wu,49100,421.9,6.0,7.59
+5790,Nicolai Hojgaard,Michael Thorbjornsen,Rasmus Neergaard-Petersen,John Keefer,Kris Ventura,Steven Fisk,49600,421.8,5.0,8.12
+4560,Shane Lowry,Rasmus Hojgaard,Mac Meissner,Tom Kim,Kevin Yu,Vince Whaley,49200,423.4,2.7,8.35
+5232,Keith Mitchell,Rasmus Neergaard-Petersen,Davis Thompson,Rico Hoey,Ricky Castillo,Stephan Jaeger,49600,422.5,3.0,7.9
+413,Ryan Gerard,Nicolai Hojgaard,Thorbjorn Olesen,Ricky Castillo,Nicolas Echavarria,Garrick Higgo,49800,432.6,-0.8,9.66
+901,Ryan Gerard,Nicolai Hojgaard,Michael Thorbjornsen,Tom Kim,Nicolas Echavarria,Webb Simpson,49800,430.4,1.3,9.92
+7661,Ryan Gerard,Thorbjorn Olesen,Alex Smalley,Kristoffer Reitan,Ricky Castillo,Takumi Kanaya,48600,419.7,8.6,6.86
+3772,Shane Lowry,Ryan Gerard,Michael Thorbjornsen,Stephan Jaeger,Zecheng Dou,Chandler Phillips,49900,424.5,4.0,8.36
+274,Shane Lowry,Ryan Gerard,Kristoffer Reitan,Rico Hoey,Mackenzie Hughes,Gary Woodland,49400,433.6,0.6,9.24
+4373,Shane Lowry,Rasmus Hojgaard,Thorbjorn Olesen,John Parry,Michael Brennan,Dylan Wu,49400,423.6,3.6,8.06
+3162,Shane Lowry,Nicolai Hojgaard,Christiaan Bezuidenhout,Rico Hoey,Jesper Svensson,Adrien Saddier,49300,425.4,8.6,7.67
+3341,Shane Lowry,Ryan Gerard,Michael Thorbjornsen,Doug Ghim,Adrien Dumont De Chassart,Webb Simpson,49700,425.2,10.3,7.42
+505,Shane Lowry,Ryan Gerard,Max McGreevy,Mackenzie Hughes,Garrick Higgo,Steven Fisk,49500,432.1,5.8,8.41
+7577,Ryan Gerard,Rasmus Hojgaard,Thorbjorn Olesen,Max McGreevy,Beau Hossler,William Mouw,49300,419.8,12.2,6.71
+5476,Rasmus Hojgaard,Nicolai Hojgaard,Davis Thompson,Rico Hoey,John Parry,Adam Svensson,49100,422.2,5.1,7.89
+5883,Shane Lowry,Nicolai Hojgaard,Michael Thorbjornsen,Will Zalatoris,Adrien Saddier,John VanDerLaan,50000,421.7,24.0,6.1
+2804,Ryan Gerard,Nicolai Hojgaard,Sami Valimaki,Matt Wallace,Garrick Higgo,Kris Ventura,48600,426.0,3.4,8.36
+2033,Ryan Gerard,Nicolai Hojgaard,Michael Thorbjornsen,Michael Brennan,Kevin Roy,Mark Hubbard,49000,427.5,1.1,9.23
+
+GOLFER EXPOSURE
+Golfer,Lineups,Exposure % (of 20)
+Ryan Gerard,12,60.0
+Shane Lowry,10,50.0
+Nicolai Hojgaard,9,45.0
+Michael Thorbjornsen,7,35.0
+Rasmus Hojgaard,5,25.0
+Rico Hoey,5,25.0
+Thorbjorn Olesen,5,25.0
+Kristoffer Reitan,4,20.0
+Ricky Castillo,4,20.0
+Mark Hubbard,3,15.0
+Tom Kim,3,15.0
+Garrick Higgo,3,15.0
+Adrien Dumont De Chassart,2,10.0
+Dylan Wu,2,10.0
+Rasmus Neergaard-Petersen,2,10.0
+Kris Ventura,2,10.0
+Steven Fisk,2,10.0
+Davis Thompson,2,10.0
+Stephan Jaeger,2,10.0
+Nicolas Echavarria,2,10.0
+Webb Simpson,2,10.0
+Mackenzie Hughes,2,10.0
+John Parry,2,10.0
+Michael Brennan,2,10.0
+Adrien Saddier,2,10.0
+Max McGreevy,2,10.0
+Daniel Berger,1,5.0
+John Keefer,1,5.0
+Mac Meissner,1,5.0
+Kevin Yu,1,5.0
+Vince Whaley,1,5.0
+Keith Mitchell,1,5.0
+Alex Smalley,1,5.0
+Takumi Kanaya,1,5.0
+Zecheng Dou,1,5.0
+Chandler Phillips,1,5.0
+Gary Woodland,1,5.0
+Christiaan Bezuidenhout,1,5.0
+Jesper Svensson,1,5.0
+Doug Ghim,1,5.0
+Beau Hossler,1,5.0
+William Mouw,1,5.0
+Adam Svensson,1,5.0
+Will Zalatoris,1,5.0
+John VanDerLaan,1,5.0
+Sami Valimaki,1,5.0
+Matt Wallace,1,5.0
+Kevin Roy,1,5.0
