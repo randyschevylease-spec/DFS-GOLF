@@ -16,7 +16,7 @@ CSV_PATH = Path(__file__).parent / (sys.argv[1] if len(sys.argv) > 1 else _defau
 OUT_CSV = CSV_PATH.with_name(CSV_PATH.stem + "_portfolio.csv")
 TARGET = 150
 MAX_OVERLAP = 3          # max shared players with any already-selected lineup
-MAX_EXPOSURE = 0.35      # max % of portfolio any single player can appear in
+MAX_EXPOSURE = 1.0       # no per-player exposure cap
 QUALITY_POOL_SIZE = 10000 # top N by combined rank
 
 
