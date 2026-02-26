@@ -373,6 +373,14 @@ def main():
         print("  No contests fetched. Exiting.")
         return
 
+    # Sort contests by total investment (max_entries × fee) descending —
+    # highest-value contests get first pick from the candidate pool
+    contests.sort(key=lambda c: c["max_entries"] * c["fee"], reverse=True)
+    print(f"\n  Contest priority order (by investment):")
+    for i, c in enumerate(contests):
+        invest = c["max_entries"] * c["fee"]
+        print(f"    {i+1}. ${invest:>6,} — {c['name'][:50]}")
+
     # ══════════════════════════════════════════════════════════════════
     # STEP 3: Generate opponent field (largest contest size, reusable)
     # ══════════════════════════════════════════════════════════════════
@@ -625,6 +633,7 @@ def main():
 
     results = []
     event_name = "Cognizant Classic"
+    used_candidate_indices = set()  # Track lineups already assigned to prior contests
 
     for ci, contest_def in enumerate(contests):
         cid = contest_def["cid"]
@@ -662,7 +671,7 @@ def main():
         # Compute cut survival matrix for this contest
         cut_survival = compute_cut_survival(candidates, players, args.sims)
 
-        # Select portfolio via new optimizer
+        # Select portfolio via new optimizer (exclude lineups already in other contests)
         portfolio = optimize_portfolio(
             payouts, entry_fee, max_entries, candidates,
             n_players=n_players,
@@ -674,9 +683,13 @@ def main():
             cut_survival=cut_survival,
             edge_sources=edge_sources,
             edge_diversity_weight=5.0,
+            excluded_indices=used_candidate_indices,
         )
 
         selected = portfolio.selected_indices
+
+        # Track these lineups so subsequent contests can't reuse them
+        used_candidate_indices.update(selected)
 
         # Build lineups with player dicts for CSV export
         lineups = []

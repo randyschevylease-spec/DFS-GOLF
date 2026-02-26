@@ -66,7 +66,8 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
                                diversity_weight=0.0, waves=None,
                                min_early_pct=0.0, min_late_pct=0.0,
                                cut_survival=None, edge_sources=None,
-                               edge_diversity_weight=0.0):
+                               edge_diversity_weight=0.0,
+                               excluded_indices=None):
     """Greedy portfolio construction with overlap penalty and golf enhancements.
 
     Core algorithm (unchanged from proven E[max]):
@@ -125,6 +126,14 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
     alive = np.ones(n_candidates, dtype=bool)
     appearances = np.zeros(n_players, dtype=np.int32)
 
+    # Exclude lineups already assigned to other contests
+    if excluded_indices is not None and len(excluded_indices) > 0:
+        for ei in excluded_indices:
+            if 0 <= ei < n_candidates:
+                alive[ei] = False
+        n_excluded = int((~alive).sum())
+        print(f"    Cross-contest exclusion: {n_excluded} lineups blocked from prior contests")
+
     selected = []
     selection_log = []
     port_returns = np.zeros(n_sims, dtype=np.float64)
@@ -170,12 +179,13 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
     else:
         use_edge_diversity = False
 
-    # ── Round 1: best individual lineup ──
+    # ── Round 1: best individual lineup (respecting exclusions) ──
     if cut_survival is not None:
-        r1_mean = effective_payouts.mean(axis=1)
-        best_first = int(np.argmax(r1_mean))
+        r1_scores = effective_payouts.mean(axis=1).copy()
     else:
-        best_first = int(np.argmax(mean_payouts))
+        r1_scores = mean_payouts.copy()
+    r1_scores[~alive] = -np.inf
+    best_first = int(np.argmax(r1_scores))
 
     selected.append(best_first)
     running_max = effective_payouts[best_first].copy()
@@ -661,7 +671,8 @@ def optimize_portfolio(payouts, entry_fee, n_select, candidates, n_players,
                         diversity_weight=0.0, waves=None,
                         min_early_pct=0.0, min_late_pct=0.0,
                         cut_survival=None, course_profile=None,
-                        edge_sources=None, edge_diversity_weight=0.0):
+                        edge_sources=None, edge_diversity_weight=0.0,
+                        excluded_indices=None):
     """Main entry point: dispatches to the selected optimization method.
 
     Args:
@@ -698,7 +709,8 @@ def optimize_portfolio(payouts, entry_fee, n_select, candidates, n_players,
             min_early_pct=min_early_pct, min_late_pct=min_late_pct,
             cut_survival=cut_survival,
             edge_sources=edge_sources,
-            edge_diversity_weight=edge_diversity_weight)
+            edge_diversity_weight=edge_diversity_weight,
+            excluded_indices=excluded_indices)
 
     elif method == "genetic":
         return optimize_portfolio_genetic(
