@@ -15,6 +15,8 @@ Methods:
 Golf-specific enhancements:
   - Cut-line awareness: dead lineups (3+ missed cuts) are penalized
   - Wave-aware diversity: ensures coverage across AM/PM waves
+  - Edge-source diversity: ensures coverage across projection edge sources
+    (form, SG fit, course history, course fit, baseline skill)
   - Course-type bias: adjusts diversity/ceiling/floor weights by course profile
 """
 import random as pyrandom
@@ -37,6 +39,7 @@ class OptimizedPortfolio:
     max_player_exposure: dict    # {player_idx: exposure_pct}
     wave_split: dict             # {"early": pct, "late": pct}
     dead_lineup_rate: float      # % of lineup-sims where lineup is dead (cut)
+    edge_source_split: dict      # {edge_category: pct} — projection edge diversity
     selection_log: list          # Per-round selection details
 
 
@@ -62,17 +65,20 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
                                max_exposure=None, cvar_lambda=None,
                                diversity_weight=0.0, waves=None,
                                min_early_pct=0.0, min_late_pct=0.0,
-                               cut_survival=None):
+                               cut_survival=None, edge_sources=None,
+                               edge_diversity_weight=0.0):
     """Greedy portfolio construction with overlap penalty and golf enhancements.
 
     Core algorithm (unchanged from proven E[max]):
       For each round, pick the candidate with highest:
         score = E[marginal_improvement] + λ×CVaR_tail - δ×overlap_penalty
+                - ε×edge_concentration_penalty
 
     New features:
       - Overlap penalty: penalizes candidates sharing many players with portfolio
       - Wave coverage: soft constraint ensuring AM/PM balance
       - Cut-line awareness: penalizes lineups likely to go dead from missed cuts
+      - Edge-source diversity: penalizes concentration on a single projection edge
 
     Args:
         payouts: (n_candidates, n_sims) array of dollar payouts
@@ -88,6 +94,10 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
         min_late_pct: minimum PM wave exposure fraction (0=unconstrained)
         cut_survival: optional (n_candidates, n_sims) array of survival scores
                       (1.0 = all players make cut, 0.0 = dead lineup)
+        edge_sources: optional dict with per-player edge decomposition:
+                      {"primary": list of str (edge category per player),
+                       "categories": list of str (all edge category names)}
+        edge_diversity_weight: penalty strength for edge-source concentration
 
     Returns:
         OptimizedPortfolio with full stats and selection log
@@ -141,6 +151,25 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
         port_late_slots = 0
         total_slots = 0
 
+    # Edge-source diversity tracking
+    if edge_sources is not None and edge_diversity_weight > 0:
+        edge_cats = edge_sources["categories"]
+        edge_primary = edge_sources["primary"]  # per-player primary edge
+        n_cats = len(edge_cats)
+        cat_to_idx = {c: i for i, c in enumerate(edge_cats)}
+        # Pre-compute per-candidate dominant edge: majority vote of its players
+        cand_edge_profile = np.zeros((n_candidates, n_cats), dtype=np.float64)
+        for ci, lineup in enumerate(candidates):
+            for pidx in lineup:
+                cat_idx = cat_to_idx.get(edge_primary[pidx], 0)
+                cand_edge_profile[ci, cat_idx] += 1
+            cand_edge_profile[ci] /= ROSTER_SIZE  # normalize to fractions
+        # Portfolio edge accumulator
+        port_edge_counts = np.zeros(n_cats, dtype=np.float64)
+        use_edge_diversity = True
+    else:
+        use_edge_diversity = False
+
     # ── Round 1: best individual lineup ──
     if cut_survival is not None:
         r1_mean = effective_payouts.mean(axis=1)
@@ -183,6 +212,10 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
     for pidx in candidates[best_first]:
         port_player_counts[pidx] += 1
 
+    # Initialize edge-source tracking with seed lineup
+    if use_edge_diversity:
+        port_edge_counts += cand_edge_profile[best_first]
+
     # ── Greedy rounds 2..K ──
     for rnd in range(1, n_select):
         if not alive.any():
@@ -220,6 +253,16 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
                 avg_overlap = overlap / (ROSTER_SIZE * n_sel)
                 # Scale: avg_overlap ranges 0-1, penalty scaled by diversity_weight
                 score_buf[ci] -= avg_overlap * diversity_weight * 10.0
+
+        # ── Edge-source diversity penalty ──
+        if use_edge_diversity and len(selected) > 0:
+            # Portfolio edge distribution (normalized to fractions)
+            port_edge_frac = port_edge_counts / port_edge_counts.sum() if port_edge_counts.sum() > 0 else np.ones(n_cats) / n_cats
+            # Penalize candidates whose edge profile aligns with already-overweight edges
+            # For each candidate: dot(cand_edge_profile, port_edge_frac) measures correlation
+            # High dot = candidate reinforces existing concentration → penalty
+            edge_correlation = cand_edge_profile @ port_edge_frac  # (n_candidates,)
+            score_buf -= edge_correlation * edge_diversity_weight * alive
 
         # ── Wave coverage soft constraint ──
         if waves is not None and (min_early_pct > 0 or min_late_pct > 0) and total_slots > 0:
@@ -280,6 +323,10 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
                     port_late_slots += 1
             total_slots += ROSTER_SIZE
 
+        # Update edge-source tracking
+        if use_edge_diversity:
+            port_edge_counts += cand_edge_profile[best_idx]
+
         if len(selected) % 25 == 0 or len(selected) == n_select:
             tail_mean = float(port_returns[tail_idx].mean()) if cvar_lambda > 0 else 0
             print(f"    [{len(selected)}/{n_select}] ROI={port_roi:+.1f}%  "
@@ -294,9 +341,17 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
         })
 
     # ── Build output ──
+    # Compute final edge distribution for output
+    edge_source_split = {}
+    if use_edge_diversity and port_edge_counts.sum() > 0:
+        for i, cat in enumerate(edge_cats):
+            edge_source_split[cat] = float(port_edge_counts[i] / port_edge_counts.sum() * 100)
+        edge_str = " | ".join(f"{k} {v:.0f}%" for k, v in sorted(edge_source_split.items(), key=lambda x: -x[1]))
+        print(f"    Edge sources: {edge_str}")
+
     return _build_output(selected, candidates, payouts, effective_payouts,
                           entry_fee, n_sims, n_players, waves, cut_survival,
-                          selection_log)
+                          selection_log, edge_source_split)
 
 
 # ── Genetic Algorithm ─────────────────────────────────────────────────────
@@ -398,7 +453,7 @@ def optimize_portfolio_genetic(payouts, entry_fee, n_select, candidates, n_playe
 
     return _build_output(best_ever, candidates, payouts, effective_payouts,
                           entry_fee, n_sims, n_players, waves, cut_survival,
-                          selection_log)
+                          selection_log, {})
 
 
 # ── Hybrid: Genetic seed → Greedy refinement ──────────────────────────────
@@ -528,7 +583,7 @@ def check_wave_coverage(selected, candidates, waves, min_early_pct=0.3, min_late
 
 def _build_output(selected, candidates, payouts, effective_payouts,
                    entry_fee, n_sims, n_players, waves, cut_survival,
-                   selection_log):
+                   selection_log, edge_source_split=None):
     """Build OptimizedPortfolio from selection results."""
     n_select = len(selected)
 
@@ -594,6 +649,7 @@ def _build_output(selected, candidates, payouts, effective_payouts,
         max_player_exposure=max_player_exposure,
         wave_split=wave_split,
         dead_lineup_rate=dead_rate,
+        edge_source_split=edge_source_split or {},
         selection_log=selection_log,
     )
 
@@ -604,7 +660,8 @@ def optimize_portfolio(payouts, entry_fee, n_select, candidates, n_players,
                         method="greedy", max_exposure=None, cvar_lambda=None,
                         diversity_weight=0.0, waves=None,
                         min_early_pct=0.0, min_late_pct=0.0,
-                        cut_survival=None, course_profile=None):
+                        cut_survival=None, course_profile=None,
+                        edge_sources=None, edge_diversity_weight=0.0):
     """Main entry point: dispatches to the selected optimization method.
 
     Args:
@@ -622,6 +679,8 @@ def optimize_portfolio(payouts, entry_fee, n_select, candidates, n_players,
         min_late_pct: min PM wave exposure
         cut_survival: (n_cands, n_sims) survival scores
         course_profile: optional CourseProfile for bias adjustments
+        edge_sources: per-player edge decomposition for diversity
+        edge_diversity_weight: penalty for edge-source concentration
 
     Returns:
         OptimizedPortfolio
@@ -637,7 +696,9 @@ def optimize_portfolio(payouts, entry_fee, n_select, candidates, n_players,
             max_exposure=max_exposure, cvar_lambda=cvar_lambda,
             diversity_weight=diversity_weight, waves=waves,
             min_early_pct=min_early_pct, min_late_pct=min_late_pct,
-            cut_survival=cut_survival)
+            cut_survival=cut_survival,
+            edge_sources=edge_sources,
+            edge_diversity_weight=edge_diversity_weight)
 
     elif method == "genetic":
         return optimize_portfolio_genetic(

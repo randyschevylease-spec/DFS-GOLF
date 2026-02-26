@@ -52,12 +52,13 @@ CONTEST_IDS = [
 ]
 
 CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (2).csv"
+DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition.csv"
 CEILING_FILTER = 110
-CEILING_WEIGHT = 0.5
+CEILING_WEIGHT = 0.25
 CANDIDATE_POOL = 20000
 MIN_PROJ_PCT = 0.85
-SALARY_FLOOR_CUSTOM = 49500
-PROJ_FLOOR_CUSTOM = 415
+SALARY_FLOOR_CUSTOM = 48000
+PROJ_FLOOR_CUSTOM = 400
 
 
 def parse_players(csv_path):
@@ -141,6 +142,19 @@ def main():
     waves = [p["wave"] for p in players]
     ceiling_pts = [p["ceiling"] for p in players]
 
+    # ── Fuzzy name matching helper ──
+    import re as _re_mc
+    def _normalize_name(name):
+        """Normalize name for fuzzy matching: strip suffixes, hyphens, middle initials, periods."""
+        n = name.strip()
+        n = _re_mc.sub(r'\s+(III|II|IV|Jr\.?|Sr\.?)\s*$', '', n)  # suffixes
+        n = _re_mc.sub(r'\s+[A-Z]\.\s+', ' ', n)                 # middle initials like "L."
+        n = _re_mc.sub(r'\s+[A-Z]\s+', ' ', n)                   # middle initials without period
+        n = n.replace('-', '').replace('.', '').replace("'", '')   # hyphens, periods, apostrophes
+        n = n.lower().strip()
+        n = _re_mc.sub(r'\s+', ' ', n)
+        return n
+
     # ── Fetch P(make_cut) from DataGolf for mixture distribution ──
     print(f"\n  Fetching DataGolf make_cut probabilities...")
     mc_matched = 0
@@ -162,18 +176,6 @@ def main():
                 mc_lookup[clean_name] = mc_val / 100.0 if mc_val > 1 else mc_val
 
         # Build fuzzy matching indexes for unmatched players
-        import re as _re_mc
-        def _normalize_name(name):
-            """Normalize name for fuzzy matching: strip suffixes, hyphens, middle initials, periods."""
-            n = name.strip()
-            n = _re_mc.sub(r'\s+(III|II|IV|Jr\.?|Sr\.?)\s*$', '', n)  # suffixes
-            n = _re_mc.sub(r'\s+[A-Z]\.\s+', ' ', n)                 # middle initials like "L."
-            n = _re_mc.sub(r'\s+[A-Z]\s+', ' ', n)                   # middle initials without period
-            n = n.replace('-', '').replace('.', '').replace("'", '')   # hyphens, periods, apostrophes
-            n = n.lower().strip()
-            n = _re_mc.sub(r'\s+', ' ', n)
-            return n
-
         # Build normalized DG lookup + last-name-only lookup
         norm_lookup = {}
         norm_to_name = {}  # normalized → original DG name (for logging)
@@ -244,6 +246,71 @@ def main():
         print(f"  Warning: Could not fetch make_cut data: {e}")
         for p in players:
             p["p_make_cut"] = 0
+
+    # ── Load DataGolf decomposition for edge-source diversity ──
+    EDGE_CATEGORIES = ["baseline", "form", "sg_fit", "history", "course_fit", "true_sg"]
+    EDGE_COL_MAP = {
+        "baseline": "baseline",
+        "timing_adj": "form",
+        "sg_category_adj": "sg_fit",
+        "course_history_adj": "history",
+        "course_fit_total_adj": "course_fit",
+        "true_sg_adj": "true_sg",
+    }
+    edge_sources = None
+    try:
+        decomp_lookup = {}
+        with open(DECOMP_CSV, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                raw_name = row["player_name"]
+                if ", " in raw_name:
+                    parts = raw_name.split(", ", 1)
+                    clean_name = f"{parts[1]} {parts[0]}"
+                else:
+                    clean_name = raw_name
+                # Find primary edge: highest positive non-baseline adjustment
+                adj_vals = {}
+                for col, cat in EDGE_COL_MAP.items():
+                    if cat != "baseline":
+                        adj_vals[cat] = float(row.get(col, 0))
+                best_cat = max(adj_vals, key=lambda k: adj_vals[k])
+                primary = best_cat if adj_vals[best_cat] > 0 else "baseline"
+                decomp_lookup[clean_name] = primary
+
+        # Match to players using same fuzzy logic
+        player_edges = []
+        edge_matched = 0
+        for p in players:
+            edge = decomp_lookup.get(p["name"])
+            if edge is None:
+                # Try fuzzy: normalized name
+                p_norm = _normalize_name(p["name"])
+                for dname, dedge in decomp_lookup.items():
+                    if _normalize_name(dname) == p_norm:
+                        edge = dedge
+                        break
+            if edge is None:
+                # Last name unique match
+                p_last = p["name"].split()[-1].lower()
+                last_matches = [(dn, de) for dn, de in decomp_lookup.items()
+                                if dn.split()[-1].lower() == p_last]
+                if len(last_matches) == 1:
+                    edge = last_matches[0][1]
+            if edge:
+                player_edges.append(edge)
+                edge_matched += 1
+            else:
+                player_edges.append("baseline")  # default
+
+        edge_sources = {"primary": player_edges, "categories": EDGE_CATEGORIES}
+        # Show distribution
+        from collections import Counter
+        edge_dist = Counter(player_edges)
+        dist_str = " | ".join(f"{k} {v}" for k, v in edge_dist.most_common())
+        print(f"  Edge sources: {edge_matched}/{len(players)} matched ({dist_str})")
+    except Exception as e:
+        print(f"  Warning: Could not load decomposition data: {e}")
 
     # Compute mixture params for bimodal scoring
     mixture_params = compute_mixture_params(players)
@@ -605,6 +672,8 @@ def main():
             min_early_pct=0.3,
             min_late_pct=0.2,
             cut_survival=cut_survival,
+            edge_sources=edge_sources,
+            edge_diversity_weight=5.0,
         )
 
         selected = portfolio.selected_indices
@@ -657,6 +726,10 @@ def main():
         print(f"  Avg proj: {avg_proj:.1f} | Avg ceiling: {avg_ceil:.1f} | Avg own: {avg_own:.1f}%")
         print(f"  Dead lineup rate: {portfolio.dead_lineup_rate:.1f}%")
         print(f"  Wave split: AM {portfolio.wave_split['early']:.0f}% / PM {portfolio.wave_split['late']:.0f}%")
+        if portfolio.edge_source_split:
+            edge_str = " | ".join(f"{k} {v:.0f}%" for k, v in
+                                   sorted(portfolio.edge_source_split.items(), key=lambda x: -x[1]))
+            print(f"  Edge sources: {edge_str}")
 
         top_exp = sorted(exposure.items(), key=lambda x: -x[1])[:5]
         top_exp_str = ", ".join(f"{name} {cnt/len(lineups)*100:.0f}%" for name, cnt in top_exp)
