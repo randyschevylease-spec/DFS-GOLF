@@ -15,14 +15,13 @@ import csv
 import sys
 import os
 import time
-import math
 import numpy as np
 from pathlib import Path
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, LEVERAGE_POWER
+from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
 from engine import generate_candidates, generate_field
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -55,58 +54,6 @@ def parse_projections(path):
                 "proj_ownership": float(row["projected_ownership"]),
             })
     return players
-
-
-def generate_opponent_field(players, field_size):
-    """Generate opponent field with realistic optimizer-driven duplication.
-
-    Real GPP fields have heavy duplication because many players use similar
-    optimizers and converge on the same "obvious" lineups. We model this with
-    three tiers:
-
-    1. Optimizer archetypes (70% of field): MIP-generated lineups sampled
-       with replacement, weighted by ownership popularity. Top chalk lineups
-       get duplicated hundreds of times.
-    2. Recreational entries (30% of field): Dirichlet-multinomial sampling
-       calibrated to DG ownership. These are mostly unique.
-    """
-    own_arr = np.array([p["proj_ownership"] for p in players])
-
-    # Phase 1: Generate optimizer archetypes (low noise = what real optimizers find)
-    print("  Phase 1: Generating optimizer archetypes (low noise MIP)...")
-    archetypes = generate_candidates(
-        players, pool_size=3000, noise_scale=0.10,
-        min_proj_pct=0.92, candidate_exposure_cap=1.0
-    )
-    print(f"  → {len(archetypes)} unique archetypes")
-
-    # Phase 2: Weight each archetype by "popularity"
-    # = product of player ownership %s (chalk lineups get heavy weight)
-    log_weights = np.array([
-        sum(math.log(max(own_arr[i], 0.1)) for i in arch)
-        for arch in archetypes
-    ])
-    # Shift for numerical stability, then exponentiate
-    log_weights -= log_weights.max()
-    weights = np.exp(log_weights)
-    weights /= weights.sum()
-
-    # Phase 3: Sample optimizer portion (70%) with replacement
-    opt_size = int(field_size * 0.70)
-    rec_size = field_size - opt_size
-
-    print(f"  Phase 2: Sampling {opt_size:,} optimizer entries (weighted by ownership)...")
-    rng = np.random.default_rng()
-    chosen = rng.choice(len(archetypes), size=opt_size, p=weights, replace=True)
-    field = [archetypes[i] for i in chosen]
-
-    # Phase 4: Recreational entries via calibrated Dirichlet-multinomial
-    print(f"  Phase 3: Sampling {rec_size:,} recreational entries (Dirichlet)...")
-    rec = generate_field(players, rec_size)
-    field.extend(rec)
-    print(f"  → {len(field):,} total opponent entries")
-
-    return field
 
 
 def main():
@@ -160,7 +107,7 @@ def main():
     print(f"  OPPONENT FIELD ({FIELD_SIZE:,} entries)")
     print(f"{'='*70}")
 
-    field = generate_opponent_field(players, FIELD_SIZE)
+    field = generate_field(players, FIELD_SIZE)
 
     # Duplication analysis
     opp_counter = Counter(tuple(sorted(lu)) for lu in field)
@@ -199,11 +146,6 @@ def main():
     pts_arr = np.array([p["projected_points"] for p in players])
     sal_arr = np.array([p["salary"] for p in players])
 
-    # Leverage-adjusted points: boost contrarian plays
-    median_own = float(np.median(own_arr))
-    leverage = (median_own / np.maximum(own_arr, 0.1)) ** LEVERAGE_POWER
-    adj_pts_arr = pts_arr * leverage
-
     scored = []
     for i, cand in enumerate(candidates):
         key = tuple(sorted(cand))
@@ -214,7 +156,6 @@ def main():
         gmown = float(np.exp(np.log(owns).mean()))
 
         dupes = opp_counter.get(key, 0)
-        adj = float(adj_pts_arr[list(cand)].sum())
 
         # Names sorted by salary descending
         idxs_by_sal = sorted(cand, key=lambda j: -sal_arr[j])
@@ -227,17 +168,16 @@ def main():
             "pts": round(pts, 1),
             "gmown": round(gmown, 2),
             "dupes": dupes,
-            "adj": adj,
         })
 
-    # Convert leverage-adjusted pts → ROI proxy (centered at 0)
-    adjs = np.array([s["adj"] for s in scored])
-    mean_adj = float(adjs.mean())
-    sorted_adjs = np.sort(adjs)
+    # Convert pts → ROI proxy (centered at 0)
+    pts_vals = np.array([s["pts"] for s in scored])
+    mean_pts = float(pts_vals.mean())
+    sorted_pts = np.sort(pts_vals)
 
     for s in scored:
-        s["roi"] = round((s["adj"] / mean_adj - 1) * 100, 1)
-        s["cash"] = round(float(np.searchsorted(sorted_adjs, s["adj"])) / len(scored) * 100, 1)
+        s["roi"] = round((s["pts"] / mean_pts - 1) * 100, 1)
+        s["cash"] = round(float(np.searchsorted(sorted_pts, s["pts"])) / len(scored) * 100, 1)
 
     # ── Step 5: Output CSV ──
     with open(OUT_CSV, "w", newline="") as f:

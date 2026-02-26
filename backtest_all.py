@@ -23,7 +23,7 @@ from functools import lru_cache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE
+from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma, empirical_sigma_from_projection
 from run_all import simulate_positions, build_payout_lookup, assign_payouts
 from backtest import _cached_get, CACHE_DIR
@@ -196,9 +196,6 @@ def build_players_from_fc(event_id, year):
         scale = target_total / total_own
         for p in players:
             p["proj_ownership"] = round(max(p["proj_ownership"] * scale, 0.1), 2)
-
-    # Apply ownership leverage for candidate generation
-    _apply_adaptive_leverage(players)
 
     fc_count = sum(1 for p in players if p["projected_points"] > 0)
     print(f"    FC data: {fc_count} players loaded directly from FantasyCruncher")
@@ -452,49 +449,6 @@ def _synthesize_ownership(players):
         p["proj_ownership"] = round(float(synth_own[i]), 2)
 
 
-def _gini_coefficient(values):
-    """Compute Gini coefficient of a distribution (0=equal, 1=concentrated)."""
-    arr = np.sort(np.array(values, dtype=np.float64))
-    n = len(arr)
-    if n == 0 or arr.sum() == 0:
-        return 0.0
-    index = np.arange(1, n + 1)
-    return float((2 * np.sum(index * arr) - (n + 1) * np.sum(arr)) / (n * np.sum(arr)))
-
-
-def _apply_adaptive_leverage(players):
-    """Apply ownership leverage with power derived from ownership concentration.
-
-    Leverage adjusts the MIP objective (mip_value) for candidate generation,
-    NOT projected_points (which drives Monte Carlo simulation means).
-
-    Concentrated ownership → higher leverage (exploit chalk/contrarian gap).
-    Spread ownership → lower leverage (less alpha in fading chalk).
-    """
-    ownerships = [p["proj_ownership"] for p in players if p["proj_ownership"] > 0]
-    if not ownerships:
-        for p in players:
-            p["mip_value"] = p["projected_points"]
-        return
-
-    gini = _gini_coefficient(ownerships)
-    leverage_power = 0.25 + 0.15 * gini  # Range: ~0.30-0.40
-
-    median_own = np.median(ownerships)
-    if median_own <= 0:
-        for p in players:
-            p["mip_value"] = p["projected_points"]
-        return
-
-    for p in players:
-        own = max(p["proj_ownership"], 0.1)
-        mult = (median_own / own) ** leverage_power
-        mult = max(0.70, min(1.50, mult))  # Floor/cap
-        p["leverage_mult"] = round(mult, 3)
-        # MIP objective gets leverage; projected_points stays clean for simulation
-        p["mip_value"] = round(p["projected_points"] * mult, 2)
-
-
 def build_players_for_backtest(predictions, dfs_data, event_id=None, year=None):
     """Build player list by merging DG predictions with actual DK data.
 
@@ -598,7 +552,6 @@ def build_players_for_backtest(predictions, dfs_data, event_id=None, year=None):
             print(f"    FC ownership used for {fc_own_count}/{len(players)} players")
         else:
             _synthesize_ownership(players)
-        _apply_adaptive_leverage(players)
 
     return players
 
@@ -1097,8 +1050,8 @@ def main():
                         help="Lineups to select per event (default: 150)")
     parser.add_argument("--entry-fee", type=float, default=25.0,
                         help="Synthetic entry fee (default: $25)")
-    parser.add_argument("--max-exposure", type=float, default=0.60,
-                        help="Max exposure cap (default: 0.60)")
+    parser.add_argument("--max-exposure", type=float, default=1.0,
+                        help="Max exposure cap (default: 1.0)")
     parser.add_argument("--sweep", action="store_true",
                         help="Run parameter sensitivity sweep")
     parser.add_argument("--sheets", action="store_true",
@@ -1159,7 +1112,7 @@ def main():
     if args.sweep:
         sweep_config = {
             "n_lineups": [50, 100, 150],
-            "max_exposure": [0.40, 0.60, 0.80],
+            "max_exposure": [0.60, 0.80, 1.0],
         }
         sweep_events = events[:min(10, len(events))]
         sweep_results = run_parameter_sweep(sweep_events, params, sweep_config)

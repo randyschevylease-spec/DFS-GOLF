@@ -3,8 +3,7 @@ from collections import defaultdict
 import numpy as np
 from highspy import Highs, ObjSense, HighsModelStatus
 from config import (
-    ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, NUM_LINEUPS, MAX_EXPOSURE,
-    LEVERAGE_POWER, LEVERAGE_MULT_FLOOR, LEVERAGE_MULT_CAP,
+    ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, NUM_LINEUPS,
 )
 
 # ── Efficient Frontier Parameters ────────────────────────────────────────────
@@ -188,45 +187,6 @@ def portfolio_metrics(lineup_indices_list, sims, precomputed_scores=None):
     }
 
 
-# ── Ownership Leverage ───────────────────────────────────────────────────────
-
-def apply_ownership_leverage(players, leverage_power, leverage_floor=None, leverage_cap=None):
-    """Apply ownership leverage multiplier to player projections.
-
-    leverage_mult = (median_ownership / max(proj_own, 0.1)) ^ power
-
-    Low-owned players get a boost, high-owned players get a slight penalty.
-    This modifies the optimizer objective only — raw projected_points stays pure.
-
-    Sets 'effective_value' and 'leverage_mult' on each player dict.
-    """
-    lev_floor = leverage_floor if leverage_floor is not None else LEVERAGE_MULT_FLOOR
-    lev_cap = leverage_cap if leverage_cap is not None else LEVERAGE_MULT_CAP
-
-    if leverage_power <= 0:
-        for p in players:
-            p["effective_value"] = p["projected_points"]
-            p["leverage_mult"] = 1.0
-        return
-
-    # Compute median ownership from players that have ownership data
-    ownerships = [p.get("proj_ownership", 0) for p in players if p.get("proj_ownership", 0) > 0]
-    if not ownerships:
-        for p in players:
-            p["effective_value"] = p["projected_points"]
-            p["leverage_mult"] = 1.0
-        return
-
-    median_own = sorted(ownerships)[len(ownerships) // 2]
-
-    for p in players:
-        own = max(p.get("proj_ownership", 0), 0.1)
-        mult = (median_own / own) ** leverage_power
-        mult = max(lev_floor, min(lev_cap, mult))
-        p["leverage_mult"] = round(mult, 3)
-        p["effective_value"] = round(p["projected_points"] * mult, 2)
-
-
 # ── Pool-Based Portfolio Optimization ────────────────────────────────────────
 
 def _solve_lineup_core(players, obj):
@@ -278,7 +238,7 @@ def _generate_candidate_pool(players, pool_size=10000, noise_scale=0.15):
     Returns list of tuples, each a sorted tuple of player indices.
     """
     n = len(players)
-    base_obj = np.array([p.get("effective_value", p["projected_points"]) for p in players])
+    base_obj = np.array([p["projected_points"] for p in players])
     rng = np.random.default_rng()
 
     candidate_set = set()
@@ -437,8 +397,7 @@ def _solve_lineup_ef(players, locked_out, max_overlap_constraints, correlation_p
     h = Highs()
     h.silent()
 
-    # Objective coefficients: effective_value (leverage-adjusted) if available, else projected_points
-    obj = np.array([p.get("effective_value", p["projected_points"]) for p in players], dtype=float)
+    obj = np.array([p["projected_points"] for p in players], dtype=float)
     if correlation_penalty is not None:
         obj = obj - correlation_penalty
 
@@ -481,7 +440,7 @@ def _solve_lineup_ef(players, locked_out, max_overlap_constraints, correlation_p
     return [i for i in range(n) if sol.col_value[i] > 0.5]
 
 
-def optimize_lineup(players, num_lineups=None, max_exposure=None, leverage_power=None,
+def optimize_lineup(players, num_lineups=None, max_exposure=None,
                     contest_params=None, pool_size=None):
     """Generate optimally diversified DFS lineups.
 
@@ -499,17 +458,13 @@ def optimize_lineup(players, num_lineups=None, max_exposure=None, leverage_power
     if num_lineups is None:
         num_lineups = cp.get("num_lineups", NUM_LINEUPS)
     if max_exposure is None:
-        max_exposure = cp.get("max_exposure", MAX_EXPOSURE)
-    if leverage_power is None:
-        leverage_power = cp.get("leverage_power", LEVERAGE_POWER)
+        max_exposure = 1.0
 
     # Contest-aware parameters (fall back to module defaults)
     kelly_frac = cp.get("kelly_fraction", KELLY_FRACTION)
     n_sims = cp.get("n_sims", N_SIMS)
     lambda_base = cp.get("lambda_base", 0.005)
     penalty_cap_pct = cp.get("lambda_penalty_cap", 0.10)
-    lev_floor = cp.get("leverage_floor", LEVERAGE_MULT_FLOOR)
-    lev_cap = cp.get("leverage_cap", LEVERAGE_MULT_CAP)
     max_overlap_early = cp.get("max_overlap_early", MAX_OVERLAP)
     max_overlap_late = cp.get("max_overlap_late", MAX_OVERLAP + 1)
 
@@ -528,16 +483,6 @@ def optimize_lineup(players, num_lineups=None, max_exposure=None, leverage_power
     print(f"  Running Monte Carlo simulation ({n_sims:,} scenarios)...")
     sims = simulate_outcomes(players, n_sims=n_sims)
     cov_matrix, sigmas = build_covariance_matrix(players)
-
-    # ── Step 1b: Apply ownership leverage ──
-    if leverage_power > 0:
-        apply_ownership_leverage(players, leverage_power,
-                                 leverage_floor=lev_floor, leverage_cap=lev_cap)
-        print(f"  Ownership leverage applied (power={leverage_power}, floor={lev_floor}, cap={lev_cap})")
-    else:
-        for p in players:
-            p["effective_value"] = p["projected_points"]
-            p["leverage_mult"] = 1.0
 
     # ── Step 2: Compute Perfect% and Kelly exposure ──
     perfect_pcts = compute_perfect_pct(players, sims)
@@ -714,8 +659,8 @@ def format_lineup(lineup, lineup_num=1):
 
     has_ownership = any(p.get("proj_ownership", 0) > 0 for p in lineup)
     if has_ownership:
-        lines.append(f"  {'Player':<25} {'Salary':>8} {'Proj Pts':>10} {'Value':>8} {'Own%':>6} {'Lev':>5}")
-        lines.append(f"  {'-'*25} {'-'*8} {'-'*10} {'-'*8} {'-'*6} {'-'*5}")
+        lines.append(f"  {'Player':<25} {'Salary':>8} {'Proj Pts':>10} {'Value':>8} {'Own%':>6}")
+        lines.append(f"  {'-'*25} {'-'*8} {'-'*10} {'-'*8} {'-'*6}")
     else:
         lines.append(f"  {'Player':<25} {'Salary':>8} {'Proj Pts':>10} {'Value':>8}")
         lines.append(f"  {'-'*25} {'-'*8} {'-'*10} {'-'*8}")
@@ -731,9 +676,8 @@ def format_lineup(lineup, lineup_num=1):
         total_points += pts
         if has_ownership:
             own = p.get("proj_ownership", 0)
-            lev = p.get("leverage_mult", 1.0)
             lines.append(
-                f"  {p['name']:<25} ${salary:>7,} {pts:>10.1f} {value:>8.2f} {own:>5.1f}% {lev:>5.2f}"
+                f"  {p['name']:<25} ${salary:>7,} {pts:>10.1f} {value:>8.2f} {own:>5.1f}%"
             )
         else:
             lines.append(

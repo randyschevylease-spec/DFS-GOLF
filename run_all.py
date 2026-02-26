@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, MAX_EXPOSURE, CVAR_LAMBDA, BASE_CORRELATION
+from config import ROSTER_SIZE, SALARY_CAP, CVAR_LAMBDA, BASE_CORRELATION
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
 from dk_contests import fetch_contest, fetch_golf_contests
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma
@@ -70,24 +70,30 @@ def filter_contests(contests, min_pool=5000, max_fee=1000):
     return filtered
 
 
-def simulate_positions(candidates, opponents, players, n_sims=10000, seed=None):
+def simulate_positions(candidates, opponents, players, n_sims=10000, seed=None,
+                       mixture_params=None):
     """Run Monte Carlo and return the position matrix (shared across contests).
+
+    Ranks each candidate independently against opponents only (not against
+    other candidates), preventing candidate-pool inflation of ranks.
 
     Returns:
         positions_matrix: (n_candidates, n_sims) array of finish positions (1-indexed)
-        n_total: total lineups in the simulation field
+        n_field: opponent field size + 1 (the effective contest field per candidate)
     """
     n_players = len(players)
     n_cands = len(candidates)
     n_opps = len(opponents)
-    n_total = n_cands + n_opps
 
-    # Build binary lineup matrix
-    all_lineups = candidates + opponents
-    matrix = np.zeros((n_total, n_players), dtype=np.float32)
-    for i, lu in enumerate(all_lineups):
+    # Build SEPARATE candidate and opponent lineup matrices
+    cand_matrix = np.zeros((n_cands, n_players), dtype=np.float32)
+    for i, lu in enumerate(candidates):
         for idx in lu:
-            matrix[i, idx] = 1.0
+            cand_matrix[i, idx] = 1.0
+    opp_matrix = np.zeros((n_opps, n_players), dtype=np.float32)
+    for i, lu in enumerate(opponents):
+        for idx in lu:
+            opp_matrix[i, idx] = 1.0
 
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
@@ -105,23 +111,46 @@ def simulate_positions(candidates, opponents, players, n_sims=10000, seed=None):
 
     positions_matrix = np.empty((n_cands, n_sims), dtype=np.int32)
 
+    # Mixture distribution support
+    use_mix = (mixture_params is not None and mixture_params[5].any())
+    if use_mix:
+        from engine import transform_mixture_scores
+        mix_p_miss, mix_mu_miss, mix_sigma_miss, mix_mu_make, mix_sigma_make, mix_flag = mixture_params
+        print(f"  Mixture distribution: {int(mix_flag.sum())}/{n_players} players with bimodal scores")
+
     print(f"  Simulating {n_sims:,} contests: {n_cands} candidates vs {n_opps:,} opponents...")
+    print(f"  Ranking: opponent-only (candidates ranked independently against field)")
     rng = np.random.default_rng(seed)
+    batch_size = 500
+    cand_matrix_f32 = cand_matrix.astype(np.float32)
+    opp_matrix_f32 = opp_matrix.astype(np.float32)
 
-    for sim in range(n_sims):
-        Z = rng.standard_normal(n_players)
-        scores = means + L @ Z
-        scores = np.maximum(scores, 0.0).astype(np.float32)
+    for batch_start in range(0, n_sims, batch_size):
+        bs = min(batch_size, n_sims - batch_start)
+        Z = rng.standard_normal((bs, n_players))
+        X = Z @ L.T
+        if use_mix:
+            scores = transform_mixture_scores(
+                X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
+                mix_mu_make, mix_sigma_make, mix_flag)
+        else:
+            scores = means[None, :] + X
+            np.maximum(scores, 0.0, out=scores)
 
-        lu_scores = matrix @ scores
+        # Score candidates and opponents separately
+        cand_scores = scores.astype(np.float32) @ cand_matrix_f32.T   # (bs, n_cands)
+        opp_scores = scores.astype(np.float32) @ opp_matrix_f32.T     # (bs, n_opps)
 
-        order = np.argsort(-lu_scores)
-        positions = np.empty(n_total, dtype=np.int32)
-        positions[order] = np.arange(1, n_total + 1)
+        # Sort opponent scores ascending for searchsorted
+        opp_sorted = np.sort(opp_scores, axis=1)
 
-        positions_matrix[:, sim] = positions[:n_cands]
+        # Rank each candidate against opponents only
+        for s in range(bs):
+            insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
+            positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
 
-    return positions_matrix, n_total
+    n_field = n_opps + 1
+    return positions_matrix, n_field
 
 
 def build_payout_lookup(payout_table, field_size):
@@ -221,7 +250,7 @@ def select_cross_contest_portfolio(positions_matrix, n_total, contest_configs,
         dict of {cid: list of selected candidate indices}
     """
     if max_exposure is None:
-        max_exposure = MAX_EXPOSURE
+        max_exposure = 1.0
 
     n_cands = len(candidates)
     n_contests = len(contest_configs)
@@ -605,6 +634,40 @@ def main():
 
     print(f"  Players: {len(players)}")
 
+    # ── Fetch P(make_cut) for mixture distribution ──
+    print(f"\n  Fetching DataGolf make_cut probabilities...")
+    mixture_params_data = None
+    try:
+        predictions = get_predictions()
+        mc_lookup = {}
+        for entry in predictions.get("baseline", []):
+            raw_name = entry.get("player_name", "")
+            mc_val = entry.get("make_cut", 0)
+            if mc_val and mc_val > 0:
+                if ", " in raw_name:
+                    parts = raw_name.split(", ", 1)
+                    clean_name = f"{parts[1]} {parts[0]}"
+                else:
+                    clean_name = raw_name
+                mc_lookup[clean_name] = mc_val / 100.0 if mc_val > 1 else mc_val
+
+        mc_matched = 0
+        for p in players:
+            mc = mc_lookup.get(p["name"], 0)
+            if mc > 0:
+                p["p_make_cut"] = mc
+                mc_matched += 1
+            else:
+                p["p_make_cut"] = 0
+        print(f"  Matched make_cut for {mc_matched}/{len(players)} players")
+
+        from engine import compute_mixture_params
+        mixture_params_data = compute_mixture_params(players)
+        n_mixture = int(mixture_params_data[5].sum())
+        print(f"  Mixture distribution: {n_mixture}/{len(players)} players with bimodal scores")
+    except Exception as e:
+        print(f"  Warning: Could not fetch make_cut data: {e}")
+
     # ── SHARED: Generate field + candidates ──
     max_field = args.field_size or max(c["max_entries"] for c in playable)
     max_field = min(max_field, 75000)  # cap for performance
@@ -624,11 +687,13 @@ def main():
     print(f"  SHARED: Monte Carlo simulation ({args.sims:,} sims)")
     print(f"{'='*70}")
 
-    positions_matrix, n_total = simulate_positions(
-        candidates, opponents, players, n_sims=args.sims
+    positions_matrix, n_field = simulate_positions(
+        candidates, opponents, players, n_sims=args.sims,
+        mixture_params=mixture_params_data,
     )
+    n_total = n_field  # For downstream scaling (opponent-only ranking base)
     print(f"  Position matrix: {positions_matrix.shape}")
-    print(f"  Simulation field: {n_total:,} total lineups")
+    print(f"  Ranking base: {n_field:,} (opponent-only, {n_field - 1:,} opponents + 1 candidate)")
 
     # ══════════════════════════════════════════════════════════════════════
     # PHASE 1: Fetch all contest details and build payout lookups
@@ -696,7 +761,6 @@ def main():
         candidates=candidates,
         n_players=len(players),
         n_sims=args.sims,
-        max_exposure=MAX_EXPOSURE,
         budget=args.budget,
         max_contest_appearances=args.max_contest_appearances,
     )

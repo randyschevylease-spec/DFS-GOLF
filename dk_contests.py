@@ -199,10 +199,6 @@ def derive_optimizer_params(metrics, profile):
     if contest_type == "single_entry":
         return {
             "num_lineups": 1,
-            "max_exposure": 1.0,
-            "leverage_power": round(0.20 + 0.15 * skew, 3),
-            "leverage_floor": 0.60,
-            "leverage_cap": 1.80,
             "kelly_fraction": 0.50,
             "lambda_base": 0.0,
             "lambda_penalty_cap": 0.0,
@@ -216,10 +212,6 @@ def derive_optimizer_params(metrics, profile):
 
     return {
         "num_lineups": num_lineups,
-        "max_exposure": round(0.35 + 0.45 * skew, 3),
-        "leverage_power": round(0.05 + 0.60 * skew, 3),
-        "leverage_floor": round(0.90 - 0.40 * skew, 3),
-        "leverage_cap": round(1.10 + 0.90 * skew, 3),
         "kelly_fraction": round(0.15 + 0.35 * skew, 3),
         "lambda_base": round(0.003 + 0.007 * skew, 4),
         "lambda_penalty_cap": round(0.05 + 0.15 * skew, 3),
@@ -251,8 +243,7 @@ def format_contest_summary(profile, metrics, params):
     lines.append(f"  Contest Type: {metrics['contest_type_display'].upper()} (payout skew: {metrics['payout_skew']:.2f})")
     lines.append(f"")
     lines.append(f"  AUTO-TUNED PARAMETERS:")
-    lines.append(f"    Lineups:      {params['num_lineups']:<10} Leverage:     {params['leverage_power']:.2f}")
-    lines.append(f"    Max Exposure:  {params['max_exposure']:<10.2f} Kelly Frac:   {params['kelly_fraction']:.2f}")
+    lines.append(f"    Lineups:      {params['num_lineups']:<10} Kelly Frac:   {params['kelly_fraction']:.2f}")
     lines.append(f"    Lambda Base:   {params['lambda_base']:<10.4f} Overlap:      {params['max_overlap_early']}/{params['max_overlap_late']}")
     lines.append(f"    Sims:          {params['n_sims']:<10}")
 

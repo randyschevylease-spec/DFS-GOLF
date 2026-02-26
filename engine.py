@@ -8,19 +8,27 @@ Step 3: Select the best portfolio of N lineups maximizing E[max(portfolio)]
 """
 import math
 import numpy as np
+from scipy.stats import norm as sp_norm
 from highspy import Highs, ObjSense, HighsModelStatus
-from config import (ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE, CVAR_LAMBDA,
-                     BASE_CORRELATION, PORTFOLIO_METHOD, MPT_FRONTIER_TOLERANCE,
+from config import (ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, CVAR_LAMBDA,
+                     BASE_CORRELATION, SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION,
+                     PORTFOLIO_METHOD, MPT_FRONTIER_TOLERANCE,
                      MPT_MIN_FRONTIER_SIZE, MPT_SIGMA_BINS, MPT_FRONTIER_MAX)
 
 
 # ── Step 1: Generate Contest Field ──────────────────────────────────────────
 
-def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, seed=None):
+def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, seed=None,
+                   shark_ratio=0.15, shark_noise=0.25):
     """Generate opponent lineups calibrated to DataGolf projected ownership.
 
     Uses iterative Dirichlet-multinomial sampling with pilot-based calibration
     so the resulting field's ownership distribution converges on DG targets.
+
+    A fraction of the field (shark_ratio) is generated via MIP optimization with
+    noise, simulating sophisticated optimizer users in the contest. These "shark"
+    lineups are high-quality opponents that prevent ROI inflation from facing a
+    purely random field.
 
     Args:
         players: list of dicts with 'salary', 'proj_ownership' keys
@@ -28,6 +36,8 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, s
         calibration_rounds: iterations of pilot → measure → adjust
         pilot_size: lineups per calibration pilot batch
         seed: random seed for reproducibility
+        shark_ratio: fraction of field that should be optimizer-quality (0.0-1.0)
+        shark_noise: noise scale for shark lineup generation (higher = more diverse)
 
     Returns:
         list of lineups, each a list of player indices
@@ -35,6 +45,10 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, s
     rng = np.random.default_rng(seed)
     n = len(players)
     min_sal = min(p["salary"] for p in players)
+
+    # Split field into recreational and shark portions
+    n_sharks = int(field_size * shark_ratio)
+    n_recreational = field_size - n_sharks
 
     # Target ownership as lineup inclusion % (e.g. 42.6 means 42.6% of lineups)
     target_pct = np.array([max(p.get("proj_ownership", 1.0), 0.1) for p in players])
@@ -46,7 +60,7 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, s
 
     # Iterative calibration: measure actual ownership, adjust to converge on targets
     for rnd in range(calibration_rounds):
-        pilot = _sample_lineups(players, min(pilot_size, field_size), adjusted_probs, alpha_scale, min_sal, rng=rng)
+        pilot = _sample_lineups(players, min(pilot_size, n_recreational), adjusted_probs, alpha_scale, min_sal, rng=rng)
         if not pilot:
             break
 
@@ -63,9 +77,59 @@ def generate_field(players, field_size, calibration_rounds=8, pilot_size=5000, s
         adjusted_probs = adjusted_probs * ratio
         adjusted_probs /= adjusted_probs.sum()
 
-    # Generate full field with calibrated probabilities
-    lineups = _sample_lineups(players, field_size, adjusted_probs, alpha_scale, min_sal, rng=rng)
+    # Generate recreational lineups with calibrated probabilities
+    lineups = _sample_lineups(players, n_recreational, adjusted_probs, alpha_scale, min_sal, rng=rng)
+
+    # Generate shark lineups via MIP optimization with noise
+    if n_sharks > 0:
+        shark_lineups = _generate_shark_lineups(players, n_sharks, noise_scale=shark_noise, seed=seed)
+        lineups = lineups + shark_lineups
+        # Shuffle so sharks are evenly distributed
+        rng.shuffle(lineups)
+
     return lineups
+
+
+def _generate_shark_lineups(players, n_lineups, noise_scale=0.25, seed=None):
+    """Generate optimizer-quality opponent lineups via noisy MIP solves.
+
+    Simulates sophisticated DK contestants who use lineup optimizers.
+    Uses higher noise and lower projection floor than candidate generation
+    to represent the diversity of optimizer strategies in the field.
+    """
+    n = len(players)
+    base_obj = np.array([p["projected_points"] for p in players])
+    proj_pts = base_obj.copy()
+    rng = np.random.default_rng(seed)
+    lineup_set = set()
+
+    # Looser quality floor than candidates (80% of optimal vs 85-88%)
+    optimal = _solve_mip(players, base_obj)
+    proj_floor = None
+    if optimal is not None:
+        max_proj = sum(proj_pts[i] for i in optimal)
+        proj_floor = max_proj * 0.80
+
+    # Generate with more noise for diversity
+    target = n_lineups * 3  # overshoot to compensate for dedup
+    for _ in range(target):
+        noise = np.exp(rng.normal(0.0, noise_scale, size=n))
+        sel = _solve_mip(players, base_obj * noise,
+                         proj_pts=proj_pts, proj_floor=proj_floor)
+        if sel is not None:
+            lineup_set.add(sel)
+        if len(lineup_set) >= n_lineups:
+            break
+
+    lineups = [list(s) for s in lineup_set]
+
+    # If we didn't get enough unique lineups, duplicate some
+    if len(lineups) < n_lineups and lineups:
+        extra = n_lineups - len(lineups)
+        indices = rng.integers(0, len(lineups), size=extra)
+        lineups.extend([lineups[i] for i in indices])
+
+    return lineups[:n_lineups]
 
 
 def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
@@ -147,13 +211,14 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal, rng=None):
 
 # ── Step 2: Simulate & Calculate ROI ───────────────────────────────────────
 
-def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_sims=10000):
+def simulate_contest(candidates, opponents, players, payout_table, entry_fee,
+                     n_sims=10000, waves=None, mixture_params=None):
     """Monte Carlo contest simulation with real DK payout table.
 
     For each simulation:
-      1. Sample correlated player scores
-      2. Score all lineups (candidates + opponents) via matmul
-      3. Rank all lineups
+      1. Sample correlated player scores (optionally via Gaussian copula mixture)
+      2. Score candidate and opponent lineups separately
+      3. Rank each candidate against opponents only (not against other candidates)
       4. Assign payouts from the actual DK payout table by finish position
 
     Args:
@@ -163,6 +228,8 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
         payout_table: list of (min_pos, max_pos, prize) from DK API
         entry_fee: contest entry fee in dollars
         n_sims: number of Monte Carlo simulations
+        waves: optional list of 0/1 per player (0=PM, 1=AM) for wave-aware correlation
+        mixture_params: optional tuple from compute_mixture_params() for bimodal scores
 
     Returns:
         payouts: (n_candidates, n_sims) array of dollar payouts per sim
@@ -171,23 +238,32 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
     n_players = len(players)
     n_cands = len(candidates)
     n_opps = len(opponents)
-    n_total = n_cands + n_opps
 
-    # Build binary lineup matrix: (n_total, n_players)
-    all_lineups = candidates + opponents
-    matrix = np.zeros((n_total, n_players), dtype=np.float32)
-    for i, lu in enumerate(all_lineups):
+    # Build SEPARATE candidate and opponent lineup matrices
+    cand_matrix = np.zeros((n_cands, n_players), dtype=np.float32)
+    for i, lu in enumerate(candidates):
         for idx in lu:
-            matrix[i, idx] = 1.0
+            cand_matrix[i, idx] = 1.0
+    opp_matrix = np.zeros((n_opps, n_players), dtype=np.float32)
+    for i, lu in enumerate(opponents):
+        for idx in lu:
+            opp_matrix[i, idx] = 1.0
 
     # Player score parameters
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
-    # Build covariance matrix (baseline correlation for shared conditions)
-    base_corr = BASE_CORRELATION
-    cov = np.outer(sigmas, sigmas) * base_corr
-    np.fill_diagonal(cov, sigmas ** 2)
+    # Build covariance matrix with wave-aware correlation
+    if waves is not None:
+        waves_arr = np.array(waves)
+        same_wave = (waves_arr[:, None] == waves_arr[None, :])
+        corr_matrix = np.where(same_wave, SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION)
+        np.fill_diagonal(corr_matrix, 1.0)
+        cov = np.outer(sigmas, sigmas) * corr_matrix
+    else:
+        base_corr = BASE_CORRELATION
+        cov = np.outer(sigmas, sigmas) * base_corr
+        np.fill_diagonal(cov, sigmas ** 2)
 
     # Ensure positive definite
     try:
@@ -196,47 +272,56 @@ def simulate_contest(candidates, opponents, players, payout_table, entry_fee, n_
         cov += np.eye(n_players) * 1.0
         L = np.linalg.cholesky(cov)
 
-    # Build position → payout lookup (sorted by position)
-    # payout_table: [(min_pos, max_pos, prize), ...]
-    pos_payouts = []
+    # Build payout lookup sized to n_opps + 1 (candidate + opponents)
+    sim_field = n_opps + 1
+    payout_by_pos = np.zeros(sim_field + 1, dtype=np.float64)
     for min_pos, max_pos, prize in sorted(payout_table, key=lambda x: x[0]):
-        for pos in range(min_pos, max_pos + 1):
-            pos_payouts.append((pos, prize))
-    max_payout_pos = max(pos for pos, _ in pos_payouts) if pos_payouts else 0
-
-    # Pre-build payout array indexed by position (1-indexed)
-    payout_by_pos = np.zeros(n_total + 1, dtype=np.float64)
-    for pos, prize in pos_payouts:
-        if pos <= n_total:
+        for pos in range(min_pos, min(max_pos, sim_field) + 1):
             payout_by_pos[pos] = prize
 
-    # Monte Carlo
+    # Monte Carlo (batched for memory efficiency)
     payouts = np.zeros((n_cands, n_sims), dtype=np.float64)
 
     print(f"  Simulating {n_sims:,} contests: {n_cands} candidates vs {n_opps:,} opponents...")
+    print(f"  Ranking: opponent-only (candidates ranked independently against field)")
+
+    # Unpack mixture params if provided
+    use_mix = (mixture_params is not None and mixture_params[5].any())
+    if use_mix:
+        mix_p_miss, mix_mu_miss, mix_sigma_miss, mix_mu_make, mix_sigma_make, mix_flag = mixture_params
+        n_mix = int(mix_flag.sum())
+        print(f"  Mixture distribution: {n_mix}/{n_players} players with bimodal scores")
 
     rng = np.random.default_rng()
+    batch_size = 500
+    cand_matrix_f32 = cand_matrix.astype(np.float32)
+    opp_matrix_f32 = opp_matrix.astype(np.float32)
 
-    for sim in range(n_sims):
-        # Sample correlated player scores
-        Z = rng.standard_normal(n_players)
-        scores = means + L @ Z
-        scores = np.maximum(scores, 0.0).astype(np.float32)
+    for batch_start in range(0, n_sims, batch_size):
+        bs = min(batch_size, n_sims - batch_start)
+        Z = rng.standard_normal((bs, n_players))
+        X = Z @ L.T                                                 # (bs, n_players)
+        if use_mix:
+            scores = transform_mixture_scores(
+                X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
+                mix_mu_make, mix_sigma_make, mix_flag)
+        else:
+            scores = means[None, :] + X                              # (bs, n_players)
+            np.maximum(scores, 0.0, out=scores)
 
-        # Score all lineups
-        lu_scores = matrix @ scores
+        # Score candidates and opponents separately
+        cand_scores = scores.astype(np.float32) @ cand_matrix_f32.T   # (bs, n_cands)
+        opp_scores = scores.astype(np.float32) @ opp_matrix_f32.T     # (bs, n_opps)
 
-        # Rank: highest score = position 1
-        # argsort descending, then map to positions
-        order = np.argsort(-lu_scores)
-        positions = np.empty(n_total, dtype=np.int32)
-        positions[order] = np.arange(1, n_total + 1)
+        # Sort opponent scores ascending for searchsorted
+        opp_sorted = np.sort(opp_scores, axis=1)
 
-        # Assign payouts to our candidates (first n_cands entries)
-        for c in range(n_cands):
-            pos = positions[c]
-            if pos <= max_payout_pos:
-                payouts[c, sim] = payout_by_pos[pos]
+        # Rank each candidate against opponents only
+        # Position = 1 + (# opponents scoring higher)
+        for s in range(bs):
+            insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
+            pos = np.minimum((n_opps - insert_idx + 1).astype(np.int32), sim_field)
+            payouts[:, batch_start + s] = payout_by_pos[pos]
 
     mean_payouts = payouts.mean(axis=1)
     roi = (mean_payouts - entry_fee) / entry_fee * 100
@@ -263,6 +348,115 @@ def _get_sigma(player):
     # Empirical fallback from calibration data
     proj = player.get("projected_points", 50)
     return empirical_sigma_from_projection(proj)
+
+
+# ── Mixture Distribution (Gaussian Copula) ─────────────────────────────────
+
+def compute_mixture_params(players):
+    """Derive per-player mixture distribution parameters.
+
+    Returns arrays: p_miss, mu_miss, sigma_miss, mu_make, sigma_make, use_mixture
+    """
+    n = len(players)
+    p_miss = np.zeros(n)
+    mu_miss = np.zeros(n)
+    sigma_miss = np.full(n, 6.0)
+    mu_make = np.zeros(n)
+    sigma_make = np.zeros(n)
+    use_mixture = np.zeros(n, dtype=bool)
+
+    for i, p in enumerate(players):
+        mc = p.get("p_make_cut", 0)
+        floor_val = p.get("floor", 0)
+        ceil_val = p.get("ceiling", 0)
+        mean_val = p.get("projected_points", 0)
+
+        if mc <= 0 or mc >= 1.0 or floor_val <= 0 or ceil_val <= 0:
+            # Fallback: pure normal
+            mu_make[i] = mean_val
+            sigma_make[i] = _get_sigma(p)
+            continue
+
+        p_miss_i = 1.0 - mc
+        p_make_i = mc
+        mu_miss_i = floor_val
+
+        # Law of total expectation: mu_make = (mean - p_miss * mu_miss) / p_make
+        mu_make_i = (mean_val - p_miss_i * mu_miss_i) / p_make_i
+
+        # CEILING ~ mu_make + 2*sigma
+        sigma_make_i = max((ceil_val - mu_make_i) / 2.0, 5.0)
+
+        # Guard: if mu_make < mu_miss, model is degenerate → pure normal
+        if mu_make_i < mu_miss_i:
+            mu_make[i] = mean_val
+            sigma_make[i] = _get_sigma(p)
+            continue
+
+        p_miss[i] = p_miss_i
+        mu_miss[i] = mu_miss_i
+        mu_make[i] = mu_make_i
+        sigma_make[i] = sigma_make_i
+        use_mixture[i] = True
+
+    return p_miss, mu_miss, sigma_miss, mu_make, sigma_make, use_mixture
+
+
+def transform_mixture_scores(X, sigmas, p_miss, mu_miss, sigma_miss,
+                              mu_make, sigma_make, use_mixture):
+    """Transform correlated normals to mixture-marginal scores via Gaussian copula.
+
+    Args:
+        X: (batch, n_players) correlated normals from Cholesky (X ~ N(0, Σ))
+        sigmas: (n_players,) player std devs (for normalization)
+        p_miss, mu_miss, sigma_miss: miss-cut distribution params
+        mu_make, sigma_make: make-cut distribution params
+        use_mixture: (n_players,) bool array
+
+    Returns:
+        scores: (batch, n_players) transformed scores
+    """
+    bs, n = X.shape
+    scores = np.empty((bs, n), dtype=np.float64)
+
+    # Non-mixture players: standard normal → mean + sigma * Z
+    non_mix = ~use_mixture
+    if non_mix.any():
+        X_norm = X[:, non_mix] / sigmas[None, non_mix]
+        scores[:, non_mix] = mu_make[non_mix] + sigma_make[non_mix] * X_norm
+
+    # Mixture players: Gaussian copula transform
+    mix = use_mixture
+    if mix.any():
+        X_mix = X[:, mix]
+        sig_mix = sigmas[mix]
+
+        # Normalize to standard normal marginals for copula
+        X_norm = X_mix / sig_mix[None, :]
+        U = sp_norm.cdf(X_norm)  # uniform marginals
+
+        p_miss_mix = p_miss[mix]
+        p_make_mix = 1.0 - p_miss_mix
+        mu_miss_mix = mu_miss[mix]
+        sigma_miss_mix = sigma_miss[mix]
+        mu_make_mix = mu_make[mix]
+        sigma_make_mix = sigma_make[mix]
+
+        # Split at P(miss)
+        miss_mask = U < p_miss_mix[None, :]
+
+        # Miss-cut scores
+        U_miss = np.clip(U / p_miss_mix[None, :], 1e-6, 1 - 1e-6)
+        miss_scores = mu_miss_mix + sigma_miss_mix * sp_norm.ppf(U_miss)
+
+        # Make-cut scores
+        U_make = np.clip((U - p_miss_mix[None, :]) / p_make_mix[None, :], 1e-6, 1 - 1e-6)
+        make_scores = mu_make_mix + sigma_make_mix * sp_norm.ppf(U_make)
+
+        scores[:, mix] = np.where(miss_mask, miss_scores, make_scores)
+
+    np.maximum(scores, 0.0, out=scores)
+    return scores
 
 
 # ── Step 3: Select Portfolio ───────────────────────────────────────────────
@@ -294,7 +488,7 @@ def select_portfolio_emax(payouts, entry_fee, n_select, candidates, n_players,
     n_candidates, n_sims = payouts.shape
 
     if max_exposure is None:
-        max_exposure = MAX_EXPOSURE
+        max_exposure = 1.0
     if cvar_lambda is None:
         cvar_lambda = CVAR_LAMBDA
 
@@ -308,7 +502,6 @@ def select_portfolio_emax(payouts, entry_fee, n_select, candidates, n_players,
             player_to_cands[pidx].append(ci)
 
     alive = np.ones(n_candidates, dtype=bool)
-    running_max = np.full(n_sims, -np.inf, dtype=np.float64)
     appearances = np.zeros(n_players, dtype=np.int32)
 
     selected = []
@@ -324,7 +517,23 @@ def select_portfolio_emax(payouts, entry_fee, n_select, candidates, n_players,
     # Tail weight vector for fast CVaR via matmul: payouts @ tail_w
     tail_w = np.zeros(n_sims, dtype=np.float64)
 
-    for rnd in range(n_select):
+    # Round 1: pick the lineup with highest mean payout (best individual lineup)
+    best_first = int(np.argmax(mean_payouts))
+    selected.append(best_first)
+    running_max = payouts[best_first].copy()
+    port_returns = payouts[best_first] - entry_fee
+    alive[best_first] = False
+    for pidx in candidates[best_first]:
+        appearances[pidx] += 1
+        if appearances[pidx] >= max_appearances:
+            for ci in player_to_cands[pidx]:
+                alive[ci] = False
+
+    port_roi = float(port_returns.mean()) / entry_fee * 100
+    print(f"    [1/{n_select}] Seed lineup: idx={best_first} "
+          f"mean=${mean_payouts[best_first]:.2f} ROI={port_roi:+.1f}%")
+
+    for rnd in range(1, n_select):
         if not alive.any():
             print(f"  Warning: candidate pool exhausted at {len(selected)}/{n_select}")
             break
@@ -406,7 +615,7 @@ def select_portfolio_mpt(payouts, entry_fee, n_select, candidates, n_players,
     n_candidates, n_sims = payouts.shape
 
     if max_exposure is None:
-        max_exposure = MAX_EXPOSURE
+        max_exposure = 1.0
 
     max_appearances = max(1, int(n_select * max_exposure))
 
@@ -544,7 +753,9 @@ def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
 # ── Candidate Generation ──────────────────────────────────────────────────
 
 def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
-                        min_proj_pct=0.88, candidate_exposure_cap=0.40):
+                        min_proj_pct=0.88, candidate_exposure_cap=0.40,
+                        ceiling_pts=None, ceiling_weight=0.0,
+                        salary_floor_override=None, proj_floor_override=None):
     """Generate diverse, high-quality candidate lineups via randomized MIP solves.
 
     Uses HiGHS for fast (~1ms/solve) binary integer programming with
@@ -559,20 +770,35 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
         seed: random seed
         min_proj_pct: minimum lineup projection as fraction of optimal (0.85 = 85%)
         candidate_exposure_cap: max fraction of final candidates any player can appear in
+        ceiling_pts: optional array of ceiling points per player for blended objective
+        ceiling_weight: weight for ceiling in objective blend (0=pure mean, 1=pure ceiling)
+        salary_floor_override: optional override for minimum salary usage
+        proj_floor_override: optional explicit projection floor (overrides min_proj_pct)
 
     Returns list of unique lineups (each a list of sorted player indices).
     """
     n = len(players)
-    # Use leverage-adjusted mip_value if available, otherwise projected_points
-    base_obj = np.array([p.get("mip_value", p.get("projected_points", 0)) for p in players])
+    base_obj = np.array([p["projected_points"] for p in players])
+
+    # Blend with ceiling if provided
+    if ceiling_pts is not None and ceiling_weight > 0:
+        ceiling_arr = np.array(ceiling_pts, dtype=np.float64)
+        base_obj = (1 - ceiling_weight) * base_obj + ceiling_weight * ceiling_arr
+        print(f"    Ceiling weight: {ceiling_weight:.0%} (blended objective)")
+
     proj_pts = np.array([p.get("projected_points", 0) for p in players], dtype=np.float64)
     rng = np.random.default_rng(seed)
     candidate_set = set()
 
+    sal_floor = salary_floor_override if salary_floor_override is not None else None
+
     # Solve optimal lineup to establish projection quality floor
-    optimal = _solve_mip(players, base_obj)
+    optimal = _solve_mip(players, base_obj, salary_floor_override=sal_floor)
     proj_floor = None
-    if optimal is not None and min_proj_pct > 0:
+    if proj_floor_override is not None:
+        proj_floor = proj_floor_override
+        print(f"    Projection floor: {proj_floor:.1f} pts (explicit override)")
+    elif optimal is not None and min_proj_pct > 0:
         max_proj = sum(proj_pts[i] for i in optimal)
         proj_floor = max_proj * min_proj_pct
         print(f"    Projection floor: {proj_floor:.1f} pts ({min_proj_pct:.0%} of optimal {max_proj:.1f})")
@@ -585,7 +811,8 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
         for _ in range(min(batch, pool_size - batch_start)):
             noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
             sel = _solve_mip(players, base_obj * noise,
-                             proj_pts=proj_pts, proj_floor=proj_floor)
+                             proj_pts=proj_pts, proj_floor=proj_floor,
+                             salary_floor_override=sal_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -602,7 +829,8 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
             obj = base_obj * noise
             obj[excluded] = -1e6
             sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor)
+                             proj_pts=proj_pts, proj_floor=proj_floor,
+                             salary_floor_override=sal_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -615,7 +843,8 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
                 obj[top[i]] = -1e6
                 obj[top[j]] = -1e6
                 sel = _solve_mip(players, obj,
-                                 proj_pts=proj_pts, proj_floor=proj_floor)
+                                 proj_pts=proj_pts, proj_floor=proj_floor,
+                                 salary_floor_override=sal_floor)
                 if sel is not None:
                     candidate_set.add(sel)
 
@@ -633,7 +862,8 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
             mid_mask = (salaries >= 7500) & (salaries < 9000)
             obj[mid_mask] *= 0.3
             sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor)
+                             proj_pts=proj_pts, proj_floor=proj_floor,
+                             salary_floor_override=sal_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -646,7 +876,8 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
             extreme_mask = (salaries < 7000) | (salaries > 9000)
             obj[extreme_mask] *= 0.3
             sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor)
+                             proj_pts=proj_pts, proj_floor=proj_floor,
+                             salary_floor_override=sal_floor)
             if sel is not None:
                 candidate_set.add(sel)
 
@@ -691,7 +922,7 @@ def _diversity_filter(candidates, proj_pts, n_players, exposure_cap):
     return filtered
 
 
-def _solve_mip(players, obj, proj_pts=None, proj_floor=None):
+def _solve_mip(players, obj, proj_pts=None, proj_floor=None, salary_floor_override=None):
     """Solve a single lineup MIP using HiGHS.
 
     Args:
@@ -699,6 +930,7 @@ def _solve_mip(players, obj, proj_pts=None, proj_floor=None):
         obj: objective coefficients (one per player)
         proj_pts: array of projected points per player (for floor constraint)
         proj_floor: minimum total projected points for the lineup
+        salary_floor_override: optional override for minimum salary usage
     """
     n = len(players)
     h = Highs()
@@ -713,8 +945,9 @@ def _solve_mip(players, obj, proj_pts=None, proj_floor=None):
     h.addRow(float(ROSTER_SIZE), float(ROSTER_SIZE), n, np.arange(n, dtype=np.int32), np.ones(n))
 
     # Salary bounds
+    sal_floor = salary_floor_override if salary_floor_override is not None else SALARY_FLOOR
     salaries = np.array([float(p["salary"]) for p in players])
-    h.addRow(float(SALARY_FLOOR), float(SALARY_CAP), n, np.arange(n, dtype=np.int32), salaries)
+    h.addRow(float(sal_floor), float(SALARY_CAP), n, np.arange(n, dtype=np.int32), salaries)
 
     # Minimum projection floor (ensures lineup quality)
     if proj_pts is not None and proj_floor is not None:

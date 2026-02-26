@@ -19,7 +19,9 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, NUM_LINEUPS, MAX_EXPOSURE, CVAR_LAMBDA
+from config import ROSTER_SIZE, SALARY_CAP, NUM_LINEUPS, CVAR_LAMBDA
+
+MAX_EXPOSURE = 1.0  # every player eligible for every lineup slot
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
 from dk_salaries import find_latest_csv, parse_dk_csv, match_players_exact  # kept for optional CSV override
 from dk_contests import fetch_contest, fetch_golf_contests, format_contest_list

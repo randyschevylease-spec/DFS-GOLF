@@ -11,9 +11,9 @@ ROSTER_SIZE = 6
 SALARY_CAP = 50000
 SALARY_FLOOR = 48000  # Minimum salary usage (96% of cap)
 
-# Multi-lineup exposure limit (max % of lineups a single player can appear in)
-MAX_EXPOSURE = 0.60
 BASE_CORRELATION = 0.11
+SAME_WAVE_CORRELATION = 0.25   # same AM/PM wave → shared conditions
+DIFF_WAVE_CORRELATION = 0.05   # cross-wave → different conditions
 
 # CVaR tail-risk penalty (λ). Controls upside vs downside tradeoff:
 #   0.0  = pure E[max] — best for GPP (highest ROI, best diversification)
@@ -22,13 +22,8 @@ BASE_CORRELATION = 0.11
 # For top-heavy GPP contests, 0.0 is optimal. Use --cvar-lambda to override.
 CVAR_LAMBDA = 0.0
 
-# Ownership leverage
-LEVERAGE_POWER = 0.35
-LEVERAGE_MULT_FLOOR = 0.70
-LEVERAGE_MULT_CAP = 1.50
-
 # Portfolio selection method
-PORTFOLIO_METHOD = "mpt"          # "mpt" or "emax"
+PORTFOLIO_METHOD = "emax"         # "mpt" or "emax"
 MPT_FRONTIER_TOLERANCE = 0.02     # Sharpe tolerance for near-frontier inclusion
 MPT_MIN_FRONTIER_SIZE = 200       # Minimum frontier candidates
 MPT_SIGMA_BINS = 50               # Risk bins for envelope sweep

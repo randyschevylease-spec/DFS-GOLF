@@ -11,7 +11,7 @@ from scipy.stats import gmean
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, MAX_EXPOSURE, BASE_CORRELATION
+from config import ROSTER_SIZE, SALARY_CAP, BASE_CORRELATION
 from engine import (generate_field, _get_sigma, empirical_sigma_from_projection)
 from run_all import build_payout_lookup
 from backtest_all import build_players_from_fc, load_fc_payout_table

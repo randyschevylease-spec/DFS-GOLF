@@ -10,7 +10,9 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, MAX_EXPOSURE
+from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
+
+MAX_EXPOSURE = 1.0  # every player eligible for every lineup slot
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma
 from run_all import simulate_positions, build_payout_lookup, assign_payouts
 from backtest_all import (

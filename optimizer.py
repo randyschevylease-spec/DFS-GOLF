@@ -12,7 +12,6 @@ Usage:
     python optimizer.py --contest 188100564      # Auto-tune from DK contest
     python optimizer.py --list-contests          # Browse current DK golf contests
     python optimizer.py --lineups 10             # Generate 10 lineups
-    python optimizer.py --leverage 0.50          # Aggressive ownership leverage
     python optimizer.py --snapshot               # Save prediction snapshot (Mon/Tue)
     python optimizer.py --compare                # Compare to snapshot + wire movement
     python optimizer.py --sheets                 # Export lineups to Google Sheets
@@ -25,7 +24,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import NUM_LINEUPS, ROSTER_SIZE, LEVERAGE_POWER
+from config import NUM_LINEUPS, ROSTER_SIZE
 from datagolf_client import (
     get_predictions,
     get_fantasy_projections,
@@ -63,10 +62,6 @@ def main():
                         help=f"Number of lineups to generate (default: {NUM_LINEUPS})")
     parser.add_argument("--csv", type=str, default=None,
                         help="Path to DraftKings salary CSV (default: latest in salaries/)")
-    parser.add_argument("--exposure", type=float, default=None,
-                        help="Max player exposure across lineups (0.0-1.0)")
-    parser.add_argument("--leverage", type=float, default=None,
-                        help=f"Ownership leverage power (0=none, 0.35=default, 0.5=aggressive)")
     parser.add_argument("--snapshot", action="store_true",
                         help="Save current predictions as a snapshot (run Mon/Tue)")
     parser.add_argument("--compare", action="store_true",
@@ -288,15 +283,8 @@ def main():
 
     # CLI overrides take precedence over contest-derived params
     effective_lineups = args.lineups
-    effective_leverage = args.leverage
-    effective_exposure = args.exposure
-
     if effective_lineups is None:
         effective_lineups = (contest_params or {}).get("num_lineups", NUM_LINEUPS)
-    if effective_leverage is None:
-        effective_leverage = (contest_params or {}).get("leverage_power", LEVERAGE_POWER)
-    if effective_exposure is None and contest_params:
-        effective_exposure = contest_params.get("max_exposure")
 
     # ── Step 1: Fetch DataGolf fantasy projections (PRIMARY data source) ──
     print("\n[1/7] Fetching DataGolf fantasy projections...")
@@ -501,15 +489,12 @@ def main():
             print(f"  {p['name']:<25} {p['sg_ott']:>+5.2f} {p['sg_app']:>+5.2f} {p['sg_arg']:>+5.2f} {p['sg_putt']:>+5.2f}")
 
     # ── Step 7: Optimize lineups + export ──
-    print(f"\n[7/7] Optimizing lineups (leverage={effective_leverage})...")
+    print(f"\n[7/7] Optimizing lineups...")
     kwargs = {
         "num_lineups": effective_lineups,
-        "leverage_power": effective_leverage,
         "contest_params": contest_params,
         "pool_size": args.pool_size,
     }
-    if effective_exposure is not None:
-        kwargs["max_exposure"] = effective_exposure
 
     lineups = optimize_lineup(projected_players, **kwargs)
 
