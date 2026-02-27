@@ -355,6 +355,10 @@ def _get_sigma(player):
 def compute_mixture_params(players):
     """Derive per-player mixture distribution parameters.
 
+    Miss-cut expected score is derived as proj - 2*std_dev (floored at 15 DK pts).
+    The CSV FLOOR column is only proj - 1*std_dev, which is too high to represent
+    a real missed cut (2 rounds of bad golf, no weekend, no finish bonus).
+
     Returns arrays: p_miss, mu_miss, sigma_miss, mu_make, sigma_make, use_mixture
     """
     n = len(players)
@@ -367,11 +371,11 @@ def compute_mixture_params(players):
 
     for i, p in enumerate(players):
         mc = p.get("p_make_cut", 0)
-        floor_val = p.get("floor", 0)
         ceil_val = p.get("ceiling", 0)
         mean_val = p.get("projected_points", 0)
+        sd = p.get("std_dev", 0)
 
-        if mc <= 0 or mc >= 1.0 or floor_val <= 0 or ceil_val <= 0:
+        if mc <= 0 or mc >= 1.0 or ceil_val <= 0 or sd <= 0:
             # Fallback: pure normal
             mu_make[i] = mean_val
             sigma_make[i] = _get_sigma(p)
@@ -379,7 +383,10 @@ def compute_mixture_params(players):
 
         p_miss_i = 1.0 - mc
         p_make_i = mc
-        mu_miss_i = floor_val
+
+        # Miss-cut expected score: proj - 2σ, floored at 15 DK pts
+        # (2 rounds of bad golf, no weekend rounds, no finish bonus)
+        mu_miss_i = max(mean_val - 2.0 * sd, 15.0)
 
         # Law of total expectation: mu_make = (mean - p_miss * mu_miss) / p_make
         mu_make_i = (mean_val - p_miss_i * mu_miss_i) / p_make_i
