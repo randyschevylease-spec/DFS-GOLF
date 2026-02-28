@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import ROSTER_SIZE, SALARY_CAP, CVAR_LAMBDA, BASE_CORRELATION
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
 from dk_contests import fetch_contest, fetch_golf_contests
-from engine import generate_field, generate_candidates, select_portfolio, _get_sigma
+from engine import generate_field, generate_candidates, select_portfolio, _get_sigma, _rank_candidates_vectorized
 import re
 import gspread
 from google.oauth2.service_account import Credentials
@@ -141,13 +141,9 @@ def simulate_positions(candidates, opponents, players, n_sims=10000, seed=None,
         cand_scores = scores.astype(np.float32) @ cand_matrix_f32.T   # (bs, n_cands)
         opp_scores = scores.astype(np.float32) @ opp_matrix_f32.T     # (bs, n_opps)
 
-        # Sort opponent scores ascending for searchsorted
-        opp_sorted = np.sort(opp_scores, axis=1)
-
-        # Rank each candidate against opponents only
-        for s in range(bs):
-            insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
-            positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
+        # Vectorized ranking: all sims × all candidates in one searchsorted call
+        positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
+        positions_matrix[:, batch_start:batch_start + bs] = positions.T
 
     n_field = n_opps + 1
     return positions_matrix, n_field

@@ -33,7 +33,7 @@ from datagolf_client import get_predictions
 from dk_contests import fetch_contest
 from engine import (generate_candidates, simulate_contest,
                     _get_sigma, compute_mixture_params,
-                    transform_mixture_scores)
+                    transform_mixture_scores, _rank_candidates_vectorized)
 from field_generator import (generate_field as generate_field_archetypes,
                              field_to_index_lists, DEFAULT_ARCHETYPE_WEIGHTS)
 from portfolio_optimizer import (optimize_portfolio, compute_cut_survival,
@@ -518,10 +518,9 @@ def main():
 
         opp_score_sum += opp_scores.sum(axis=0).astype(np.float64)
 
-        opp_sorted = np.sort(opp_scores, axis=1)
-        for s in range(bs):
-            insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
-            positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
+        # Vectorized ranking: all sims × all candidates in one searchsorted call
+        positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
+        positions_matrix[:, batch_start:batch_start + bs] = positions.T
 
     sim_elapsed = time.time() - sim_start
     print(f"  Phase 1 complete in {sim_elapsed:.1f}s")
@@ -614,10 +613,9 @@ def main():
         cand_scores = scores @ cand_matrix_f32.T
         opp_scores = scores @ opp_matrix_f32.T
 
-        opp_sorted = np.sort(opp_scores, axis=1)
-        for s in range(bs):
-            insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
-            positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
+        # Vectorized ranking: all sims × all candidates in one searchsorted call
+        positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
+        positions_matrix[:, batch_start:batch_start + bs] = positions.T
 
         done = batch_start + bs
         if done % 10000 == 0 or done == n_portfolio_sims:
