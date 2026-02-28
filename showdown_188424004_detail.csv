@@ -1,0 +1,151 @@
+lineup_num,players,salary,projection,mean_payout,roi_pct
+1,Ryan Gerard | Rasmus Hojgaard | Alex Smalley | Adrien Saddier | Mackenzie Hughes | Matt Wallace,50000,246.3,25.34,406.8
+2,Nicolai Hojgaard | Michael Brennan | Billy Horschel | Jordan L. Smith | Kevin Roy | Tom Kim,48200,241.9,21.49,329.8
+3,Keith Mitchell | Davis Thompson | Alex Smalley | John Parry | Austin Eckroat | Mackenzie Hughes,49800,244.3,24.78,395.7
+4,Ryan Gerard | Max McGreevy | Rasmus Neergaard-Petersen | Mackenzie Hughes | Sudarshan Yellamaraju | Daniel Brown,49400,243.5,23.63,372.6
+5,Ryan Gerard | Keith Mitchell | Max Homa | Beau Hossler | Austin Eckroat | Matt Wallace,49900,245.3,23.33,366.6
+6,Ryan Gerard | Rasmus Hojgaard | Ricky Castillo | Eric Cole | Mackenzie Hughes | Sudarshan Yellamaraju,49500,243.6,23.57,371.5
+7,Ryan Gerard | Christiaan Bezuidenhout | Thorbjorn Olesen | Max Homa | Austin Eckroat | Daniel Brown,49500,243.2,22.67,353.5
+8,Keith Mitchell | Alex Smalley | John Parry | Max Homa | Ricky Castillo | Lee Hodges,49500,242.3,23.57,371.5
+9,Nicolai Hojgaard | Nicolas Echavarria | Michael Brennan | Joel Dahmen | Garrick Higgo | Emiliano Grillo,48100,241.8,19.27,285.3
+10,Max McGreevy | Rasmus Neergaard-Petersen | Davis Thompson | John Parry | Austin Eckroat | Matt Wallace,49500,242.2,21.69,333.9
+11,Keith Mitchell | Rasmus Hojgaard | Rasmus Neergaard-Petersen | Mackenzie Hughes | Zecheng Dou | Sudarshan Yellamaraju,49500,243.5,21.26,325.3
+12,Nicolai Hojgaard | Daniel Berger | Kristoffer Reitan | Jordan L. Smith | William Mouw | Takumi Kanaya,49000,241.3,18.19,263.7
+13,Keith Mitchell | Rasmus Hojgaard | Max McGreevy | Steven Fisk | Adrien Saddier | Matt Wallace,50000,242.7,20.58,311.5
+14,Keith Mitchell | Christiaan Bezuidenhout | Thorbjorn Olesen | Max Homa | Matt Wallace | Sudarshan Yellamaraju,48800,242.1,21.28,325.5
+15,Shane Lowry | Aaron Rai | Kristoffer Reitan | Michael Brennan | Garrick Higgo | Adrien Dumont De Chassart,49900,243.5,17.84,256.9
+16,Ryan Gerard | Davis Thompson | John Parry | Max Homa | Beau Hossler | Austin Eckroat,50000,244.1,23.56,371.2
+17,Ryan Gerard | Keith Mitchell | Davis Thompson | Mackenzie Hughes | Zecheng Dou | Matthieu Pavon,49900,244.5,21.35,327.0
+18,Shane Lowry | Nicolas Echavarria | Michael Brennan | Seamus Power | Jordan L. Smith | Kevin Roy,49500,242.8,18.26,265.2
+19,Davis Thompson | Alex Smalley | Thorbjorn Olesen | Max Homa | Lee Hodges | Matt Wallace,48000,240.9,20.58,311.6
+20,Shane Lowry | Daniel Berger | Jordan L. Smith | Chad Ramey | Garrick Higgo | Chandler Phillips,49200,241.2,17.68,253.6
+21,Rasmus Hojgaard | Max McGreevy | Christiaan Bezuidenhout | John Parry | Chan Kim | Mackenzie Hughes,50000,241.5,19.15,283.0
+22,Daniel Berger | Aaron Rai | Kristoffer Reitan | Nicolas Echavarria | Joel Dahmen | Adrien Dumont De Chassart,49400,239.9,17.49,249.8
+23,Ryan Gerard | Keith Mitchell | Thorbjorn Olesen | Austin Eckroat | Adrien Saddier | Sudarshan Yellamaraju,49900,244.7,21.04,320.8
+24,Keith Mitchell | Rasmus Hojgaard | Ricky Castillo | Jackson Suber | Mackenzie Hughes | Daniel Brown,48600,240.9,19.83,296.6
+25,Shane Lowry | Nicolai Hojgaard | Nicolas Echavarria | Kevin Roy | David Ford | Zachary Bauchou,50000,240.7,16.66,233.3
+26,Nicolai Hojgaard | Daniel Berger | Tom Kim | Garrick Higgo | Emiliano Grillo | William Mouw,48000,240.5,17.32,246.4
+27,Rasmus Hojgaard | Davis Thompson | Christiaan Bezuidenhout | Alex Smalley | Sudarshan Yellamaraju | Matthieu Pavon,49400,239.6,19.25,285.1
+28,Ryan Gerard | Davis Thompson | Christiaan Bezuidenhout | Ricky Castillo | Adrien Saddier | Daniel Brown,49800,242.6,19.17,283.5
+29,Ryan Gerard | Rasmus Hojgaard | John Parry | Lee Hodges | Austin Eckroat | Steven Fisk,49800,243.4,19.71,294.1
+30,Brooks Koepka | Alex Smalley | Thorbjorn Olesen | John Parry | Ricky Castillo | Matt Wallace,48900,240.1,17.92,258.4
+31,Nicolai Hojgaard | Daniel Berger | Joel Dahmen | Jordan L. Smith | Kevin Roy | Emiliano Grillo,49600,242.1,18.88,277.5
+32,Keith Mitchell | Rasmus Hojgaard | Davis Thompson | Austin Eckroat | Matt Wallace | Daniel Brown,49400,243.7,21.25,325.0
+33,Max McGreevy | Alex Smalley | Thorbjorn Olesen | Eric Cole | Austin Eckroat | Mackenzie Hughes,48100,239.9,19.66,293.3
+34,Shane Lowry | Hao-Tong Li | Michael Brennan | Jordan L. Smith | Tom Kim | Takumi Kanaya,48900,241.8,17.12,242.4
+35,Shane Lowry | Daniel Berger | Michael Brennan | Kevin Roy | Chad Ramey | Dylan Wu,49800,240.9,16.08,221.7
+36,Rasmus Hojgaard | Davis Thompson | Christiaan Bezuidenhout | Max Homa | Mackenzie Hughes | Zecheng Dou,49300,242.9,20.55,311.1
+37,Ryan Gerard | Alex Smalley | Thorbjorn Olesen | Lee Hodges | Zecheng Dou | Daniel Brown,48300,241.8,18.01,260.3
+38,Shane Lowry | Nicolai Hojgaard | Joel Dahmen | Matti Schmid | Chandler Phillips | Adrien Dumont De Chassart,49600,240.9,15.68,213.6
+39,Ryan Gerard | Max McGreevy | John Parry | Max Homa | Mackenzie Hughes | Matt Wallace,49800,246.3,23.16,363.2
+40,Shane Lowry | Aaron Rai | Joel Dahmen | Jordan L. Smith | Garrick Higgo | Mark Hubbard,49400,241.7,16.47,229.5
+41,Ryan Gerard | Alex Smalley | John Parry | Eric Cole | Adrien Saddier | Sudarshan Yellamaraju,48700,241.2,19.56,291.2
+42,Nicolai Hojgaard | Hao-Tong Li | Kristoffer Reitan | Michael Brennan | Emiliano Grillo | Chandler Phillips,48700,240.5,16.36,227.2
+43,Shane Lowry | Kristoffer Reitan | Nicolas Echavarria | Seamus Power | Billy Horschel | Tom Kim,49800,240.5,15.03,200.6
+44,Keith Mitchell | Davis Thompson | Alex Smalley | Ricky Castillo | Lee Hodges | Mackenzie Hughes,49500,242.9,24.19,383.8
+45,Nicolai Hojgaard | Aaron Rai | Nicolas Echavarria | Billy Horschel | David Ford | Chandler Phillips,48900,238.5,15.83,216.7
+46,Ryan Gerard | Max McGreevy | Brooks Koepka | Austin Eckroat | Sudarshan Yellamaraju | Daniel Brown,49400,241.3,19.80,296.1
+47,Ryan Gerard | Brooks Koepka | Alex Smalley | Ricky Castillo | Matt Wallace | Zecheng Dou,49800,242.8,18.17,263.5
+48,Keith Mitchell | Max McGreevy | Max Homa | Lee Hodges | Austin Eckroat | Adrien Saddier,48500,241.1,19.41,288.2
+49,Daniel Berger | Aaron Rai | Nicolas Echavarria | Taylor Moore | Tom Kim | David Ford,48800,237.0,15.05,201.1
+50,Shane Lowry | Hao-Tong Li | Kristoffer Reitan | Seamus Power | Garrick Higgo | Adrien Dumont De Chassart,49200,240.1,15.78,215.6
+51,Davis Thompson | Christiaan Bezuidenhout | Alex Smalley | Thorbjorn Olesen | Chan Kim | Mackenzie Hughes,48900,239.9,19.67,293.5
+52,Keith Mitchell | Rasmus Neergaard-Petersen | Davis Thompson | John Parry | Adrien Saddier | Daniel Brown,49800,241.8,18.92,278.4
+53,Ryan Gerard | Keith Mitchell | Beau Hossler | Matt Wallace | Sudarshan Yellamaraju | Matthieu Pavon,48200,241.5,18.03,260.6
+54,Nicolai Hojgaard | Kristoffer Reitan | Michael Brennan | Jordan L. Smith | Kevin Roy | Dylan Wu,48000,241.8,18.06,261.2
+55,Rasmus Hojgaard | Rasmus Neergaard-Petersen | John Parry | Max Homa | Steven Fisk | Zecheng Dou,48800,240.6,15.94,218.7
+56,Nicolai Hojgaard | Aaron Rai | Michael Brennan | Jordan L. Smith | Takumi Kanaya | Zachary Bauchou,48200,240.0,16.32,226.4
+57,Keith Mitchell | Rasmus Hojgaard | Rasmus Neergaard-Petersen | Lee Hodges | Mackenzie Hughes | Matt Wallace,50000,244.2,20.48,309.6
+58,Nicolai Hojgaard | Daniel Berger | Matti Schmid | Austin Smotherman | Jordan L. Smith | Hank Lebioda,48900,238.0,14.29,185.8
+59,Keith Mitchell | Christiaan Bezuidenhout | Alex Smalley | Ricky Castillo | Steven Fisk | Sudarshan Yellamaraju,49000,239.9,18.84,276.8
+60,Ryan Gerard | Rasmus Hojgaard | Thorbjorn Olesen | John Parry | Matt Wallace | Kevin Streelman,50000,241.6,16.57,231.3
+61,Ryan Gerard | Max McGreevy | Max Homa | Adrien Saddier | Zecheng Dou | Matthieu Pavon,48200,240.9,16.08,221.5
+62,Shane Lowry | Aaron Rai | Austin Smotherman | Tom Kim | William Mouw | Takumi Kanaya,48300,239.0,13.77,175.3
+63,Daniel Berger | Hao-Tong Li | Billy Horschel | Taylor Moore | Kevin Roy | Garrick Higgo,48400,236.6,13.47,169.5
+64,Shane Lowry | Hao-Tong Li | Michael Brennan | Billy Horschel | Jordan L. Smith | Adrien Dumont De Chassart,49100,241.3,16.39,227.9
+65,Ryan Gerard | Christiaan Bezuidenhout | Max Homa | Lee Hodges | Matt Wallace | Sudarshan Yellamaraju,48200,242.3,18.42,268.4
+66,Ryan Gerard | Rasmus Hojgaard | Beau Hossler | Steven Fisk | Mackenzie Hughes | Zecheng Dou,48700,242.8,16.95,238.9
+67,Nicolai Hojgaard | Aaron Rai | Billy Horschel | Jordan L. Smith | Chad Ramey | Tom Kim,49500,240.2,15.74,214.8
+68,Keith Mitchell | Rasmus Hojgaard | Thorbjorn Olesen | Ricky Castillo | Adrien Saddier | Chan Kim,50000,241.5,17.70,254.0
+69,Rasmus Neergaard-Petersen | Davis Thompson | Thorbjorn Olesen | Ricky Castillo | Austin Eckroat | Daniel Brown,48100,239.7,18.28,265.6
+70,Max McGreevy | Christiaan Bezuidenhout | John Parry | Ricky Castillo | Beau Hossler | Mackenzie Hughes,48400,240.1,16.92,238.4
+71,Keith Mitchell | Brooks Koepka | Davis Thompson | Beau Hossler | Mackenzie Hughes | Daniel Brown,49000,240.0,17.52,250.5
+72,Shane Lowry | Kristoffer Reitan | Joel Dahmen | Billy Horschel | Chad Ramey | William Mouw,48600,238.8,13.79,175.8
+73,Brooks Koepka | Davis Thompson | Thorbjorn Olesen | Eric Cole | Lee Hodges | Austin Eckroat,48300,236.8,16.42,228.5
+74,Ryan Gerard | Christiaan Bezuidenhout | Thorbjorn Olesen | John Parry | Zecheng Dou | Daniel Brown,49400,242.9,18.45,269.0
+75,Shane Lowry | Nicolai Hojgaard | Michael Brennan | David Ford | William Mouw | Chandler Phillips,49300,242.0,14.70,193.9
+76,Daniel Berger | Hao-Tong Li | Kristoffer Reitan | Nicolas Echavarria | Seamus Power | Mark Hubbard,49100,237.2,15.01,200.3
+77,Daniel Berger | Aaron Rai | Seamus Power | Jordan L. Smith | Kevin Roy | Garrick Higgo,48900,240.2,16.41,228.1
+78,Max McGreevy | Christiaan Bezuidenhout | Alex Smalley | Max Homa | Lee Hodges | Zecheng Dou,48600,239.7,18.10,262.0
+79,Shane Lowry | Nicolas Echavarria | Billy Horschel | Taylor Moore | Austin Smotherman | Adrien Dumont De Chassart,48200,237.1,13.38,167.7
+80,Ryan Gerard | Max McGreevy | Thorbjorn Olesen | Jackson Suber | Austin Eckroat | Chan Kim,49800,240.4,17.11,242.2
+81,Ryan Gerard | Rasmus Hojgaard | Ricky Castillo | Lee Hodges | Adrien Saddier | Zecheng Dou,49200,243.2,18.45,268.9
+82,Max McGreevy | Davis Thompson | Thorbjorn Olesen | Max Homa | Beau Hossler | Zecheng Dou,48700,240.3,16.42,228.3
+83,Ryan Gerard | Rasmus Neergaard-Petersen | Max Homa | Steven Fisk | Mackenzie Hughes | Matt Wallace,48700,243.6,19.18,283.5
+84,Shane Lowry | Daniel Berger | Chad Ramey | Garrick Higgo | Emiliano Grillo | David Ford,48800,239.3,14.24,184.7
+85,Shane Lowry | Nicolai Hojgaard | Matti Schmid | Jordan L. Smith | Dylan Wu | Adrien Dumont De Chassart,49200,241.2,15.30,206.0
+86,Nicolai Hojgaard | Nicolas Echavarria | Michael Brennan | Joel Dahmen | Jordan L. Smith | Carson Young,48200,240.5,16.20,224.0
+87,Rasmus Hojgaard | Davis Thompson | John Parry | Max Homa | Ricky Castillo | Beau Hossler,49800,242.1,18.82,276.5
+88,Max McGreevy | Brooks Koepka | Davis Thompson | Ricky Castillo | Jackson Suber | Mackenzie Hughes,49400,238.5,15.52,210.4
+89,Rasmus Hojgaard | Brooks Koepka | John Parry | Austin Eckroat | Adrien Saddier | Mackenzie Hughes,48200,240.5,16.75,235.0
+90,Aaron Rai | Hao-Tong Li | Michael Brennan | Jordan L. Smith | Kevin Roy | Tom Kim,48200,240.4,16.86,237.1
+91,Keith Mitchell | Christiaan Bezuidenhout | Max Homa | Jackson Suber | Austin Eckroat | Chan Kim,48300,237.6,15.13,202.6
+92,Nicolai Hojgaard | Aaron Rai | Kristoffer Reitan | Joel Dahmen | Tom Kim | Takumi Kanaya,49600,241.0,15.15,202.9
+93,Ryan Gerard | Alex Smalley | Thorbjorn Olesen | Ricky Castillo | Lee Hodges | Sudarshan Yellamaraju,49300,242.7,19.36,287.2
+94,Keith Mitchell | Max McGreevy | Thorbjorn Olesen | Steven Fisk | Mackenzie Hughes | Zecheng Dou,48600,241.6,17.35,247.1
+95,Shane Lowry | Nicolai Hojgaard | Nicolas Echavarria | Garrick Higgo | Carson Young | Takumi Kanaya,49700,241.1,15.37,207.4
+96,Ryan Gerard | Keith Mitchell | Eric Cole | Beau Hossler | Chan Kim | Mackenzie Hughes,49600,241.6,16.54,230.9
+97,Rasmus Neergaard-Petersen | Davis Thompson | Alex Smalley | Eric Cole | Jackson Suber | Lee Hodges,48800,236.2,13.77,175.3
+98,Shane Lowry | Aaron Rai | Michael Brennan | Kevin Roy | Mark Hubbard | Adrien Dumont De Chassart,48800,240.8,15.31,206.2
+99,Ryan Gerard | Keith Mitchell | Max Homa | Austin Eckroat | Adrien Saddier | Daniel Brown,49300,244.3,23.40,368.0
+100,Nicolai Hojgaard | Hao-Tong Li | Seamus Power | Joel Dahmen | Jordan L. Smith | Chad Ramey,49500,239.0,14.00,180.0
+101,Nicolai Hojgaard | Daniel Berger | Michael Brennan | Jordan L. Smith | Garrick Higgo | Mark Hubbard,49300,242.8,17.13,242.6
+102,Shane Lowry | Daniel Berger | Aaron Rai | William Mouw | Dylan Wu | Zachary Bauchou,49500,238.5,13.40,168.0
+103,Shane Lowry | Michael Brennan | Matti Schmid | Austin Smotherman | Chad Ramey | Emiliano Grillo,48000,238.3,13.32,166.4
+104,Ryan Gerard | Davis Thompson | John Parry | Beau Hossler | Steven Fisk | Matt Wallace,49000,242.4,17.89,257.9
+105,Shane Lowry | Hao-Tong Li | Kristoffer Reitan | Chad Ramey | Chandler Phillips | A.J. Ewart,48200,236.8,12.48,149.6
+106,Keith Mitchell | Davis Thompson | John Parry | Max Homa | Matt Wallace | Zecheng Dou,48700,243.3,21.92,338.5
+107,Daniel Berger | Hao-Tong Li | Nicolas Echavarria | Michael Brennan | Joel Dahmen | David Ford,48900,238.9,15.49,209.8
+108,Keith Mitchell | Max McGreevy | Rasmus Neergaard-Petersen | Adrien Saddier | Matt Wallace | Sudarshan Yellamaraju,49100,241.7,16.83,236.7
+109,Shane Lowry | Nicolas Echavarria | Austin Smotherman | Jordan L. Smith | Tom Kim | Garrick Higgo,48300,241.7,14.90,198.1
+110,Ryan Gerard | Max McGreevy | Rasmus Neergaard-Petersen | Beau Hossler | Steven Fisk | Matthieu Pavon,49900,239.6,15.48,209.7
+111,Nicolai Hojgaard | Daniel Berger | Matti Schmid | Austin Smotherman | Kevin Roy | Dylan Wu,49000,238.3,13.66,173.1
+112,Keith Mitchell | Rasmus Neergaard-Petersen | Alex Smalley | John Parry | Mackenzie Hughes | Zecheng Dou,49700,243.4,19.93,298.5
+113,Christiaan Bezuidenhout | Alex Smalley | Thorbjorn Olesen | John Parry | Lee Hodges | Austin Eckroat,48300,239.7,17.80,256.0
+114,Ryan Gerard | Rasmus Hojgaard | Alex Smalley | Lee Hodges | Steven Fisk | Daniel Brown,49800,242.5,19.00,280.1
+115,Nicolai Hojgaard | Kristoffer Reitan | Nicolas Echavarria | Matti Schmid | Chad Ramey | Mark Hubbard,48200,237.4,13.17,163.5
+116,Nicolai Hojgaard | Daniel Berger | Aaron Rai | Emiliano Grillo | Adrien Dumont De Chassart | A.J. Ewart,49000,238.8,14.01,180.3
+117,Shane Lowry | Kristoffer Reitan | Michael Brennan | Jordan L. Smith | Emiliano Grillo | Chandler Phillips,48000,242.1,17.92,258.4
+118,Rasmus Hojgaard | Max McGreevy | Brooks Koepka | Adrien Saddier | Zecheng Dou | Matthieu Pavon,48500,237.4,14.91,198.2
+119,Ryan Gerard | Keith Mitchell | Lee Hodges | Zecheng Dou | Sudarshan Yellamaraju | Daniel Brown,48000,242.3,18.02,260.4
+120,Nicolai Hojgaard | Daniel Berger | Kristoffer Reitan | Billy Horschel | William Mouw | Chandler Phillips,49200,239.8,14.57,191.5
+121,Daniel Berger | Aaron Rai | Hao-Tong Li | Nicolas Echavarria | Mark Hubbard | Takumi Kanaya,49100,237.1,13.23,164.7
+122,Shane Lowry | Hao-Tong Li | Matti Schmid | Jordan L. Smith | Kevin Roy | Garrick Higgo,49200,241.0,15.21,204.2
+123,Ryan Gerard | Brooks Koepka | John Parry | Lee Hodges | Matt Wallace | Matthieu Pavon,48400,239.7,14.07,181.4
+124,Shane Lowry | Daniel Berger | Nicolas Echavarria | Michael Brennan | Dylan Wu | Adrien Dumont De Chassart,49400,241.5,15.13,202.7
+125,Keith Mitchell | Christiaan Bezuidenhout | Max Homa | Ricky Castillo | Beau Hossler | Mackenzie Hughes,48900,241.6,18.25,265.1
+126,Ryan Gerard | Rasmus Neergaard-Petersen | Christiaan Bezuidenhout | Jackson Suber | Chan Kim | Matt Wallace,49900,239.9,14.29,185.7
+127,Ryan Gerard | Rasmus Neergaard-Petersen | Ricky Castillo | Eric Cole | Steven Fisk | Mackenzie Hughes,49200,241.2,18.05,260.9
+128,Daniel Berger | Michael Brennan | Seamus Power | Billy Horschel | Matti Schmid | Austin Smotherman,48000,236.5,12.02,140.3
+129,Ryan Gerard | Rasmus Hojgaard | Ricky Castillo | Austin Eckroat | Matt Wallace | Sudarshan Yellamaraju,49000,244.7,19.14,282.7
+130,Keith Mitchell | Max McGreevy | John Parry | Ricky Castillo | Lee Hodges | Steven Fisk,49300,240.6,18.34,266.8
+131,Shane Lowry | Aaron Rai | Kristoffer Reitan | Seamus Power | Mark Hubbard | Takumi Kanaya,49600,239.1,14.13,182.5
+132,Nicolai Hojgaard | Aaron Rai | Kristoffer Reitan | Michael Brennan | Garrick Higgo | Adam Schenk,49300,240.4,14.56,191.1
+133,Daniel Berger | Hao-Tong Li | Nicolas Echavarria | Jordan L. Smith | Tom Kim | Emiliano Grillo,48000,239.0,16.28,225.5
+134,Ryan Gerard | Rasmus Neergaard-Petersen | Davis Thompson | Beau Hossler | Mackenzie Hughes | Zecheng Dou,49900,243.8,17.96,259.3
+135,Davis Thompson | Christiaan Bezuidenhout | John Parry | Max Homa | Ricky Castillo | Matt Wallace,48500,241.4,19.38,287.6
+136,Shane Lowry | Hao-Tong Li | Billy Horschel | Austin Smotherman | Garrick Higgo | Zachary Bauchou,48400,237.2,12.25,144.9
+137,Rasmus Hojgaard | Brooks Koepka | Thorbjorn Olesen | Max Homa | Austin Eckroat | Ben Silverman,48400,237.5,13.33,166.6
+138,Max McGreevy | Rasmus Neergaard-Petersen | Christiaan Bezuidenhout | Alex Smalley | Daniel Brown | Ben Silverman,48600,236.5,13.32,166.4
+139,Nicolai Hojgaard | Daniel Berger | Taylor Moore | Garrick Higgo | William Mouw | Adrien Dumont De Chassart,48000,238.6,14.28,185.6
+140,Shane Lowry | Aaron Rai | Seamus Power | Taylor Moore | Tom Kim | A.J. Ewart,49300,237.2,12.92,158.3
+141,Nicolai Hojgaard | Kristoffer Reitan | Michael Brennan | Taylor Moore | Kevin Roy | Pontus Nyholm,48000,236.8,12.03,140.6
+142,Shane Lowry | Nicolai Hojgaard | Kristoffer Reitan | Tom Kim | David Ford | Hank Lebioda,50000,240.7,12.67,153.5
+143,Shane Lowry | Aaron Rai | Michael Brennan | Kevin Roy | Carson Young | Takumi Kanaya,48900,239.7,15.23,204.5
+144,Nicolai Hojgaard | Hao-Tong Li | Michael Brennan | Taylor Moore | Garrick Higgo | David Ford,48700,238.9,12.94,158.8
+145,Ryan Gerard | Rasmus Hojgaard | Max Homa | Beau Hossler | Mackenzie Hughes | Matt Wallace,49600,245.7,20.25,305.0
+146,Hao-Tong Li | Kristoffer Reitan | Nicolas Echavarria | Michael Brennan | Seamus Power | Matti Schmid,48100,237.6,13.96,179.3
+147,Rasmus Hojgaard | Christiaan Bezuidenhout | Alex Smalley | John Parry | Austin Eckroat | Sudarshan Yellamaraju,49200,241.5,19.48,289.7
+148,Max McGreevy | Brooks Koepka | Christiaan Bezuidenhout | Lee Hodges | Adrien Saddier | Mackenzie Hughes,48400,238.1,15.16,203.3
+149,Ryan Gerard | Keith Mitchell | John Parry | Austin Eckroat | Steven Fisk | Chan Kim,49900,242.7,16.37,227.4
+150,Ryan Gerard | Davis Thompson | Alex Smalley | Adrien Saddier | Zecheng Dou | Daniel Brown,48700,242.5,18.23,264.5

@@ -1,0 +1,229 @@
+#,G,G,G,G,G,G,Salary,Proj,Mean Payout,ROI%
+1,Ryan Gerard,Rasmus Hojgaard,Alex Smalley,Adrien Saddier,Mackenzie Hughes,Matt Wallace,"$50,000",246.3,$25.34,+406.8%
+2,Nicolai Hojgaard,Michael Brennan,Billy Horschel,Jordan L. Smith,Kevin Roy,Tom Kim,"$48,200",241.9,$21.49,+329.8%
+3,Keith Mitchell,Davis Thompson,Alex Smalley,John Parry,Austin Eckroat,Mackenzie Hughes,"$49,800",244.3,$24.78,+395.7%
+4,Ryan Gerard,Max McGreevy,Rasmus Neergaard-Petersen,Mackenzie Hughes,Sudarshan Yellamaraju,Daniel Brown,"$49,400",243.5,$23.63,+372.6%
+5,Ryan Gerard,Keith Mitchell,Max Homa,Beau Hossler,Austin Eckroat,Matt Wallace,"$49,900",245.3,$23.33,+366.6%
+6,Ryan Gerard,Rasmus Hojgaard,Ricky Castillo,Eric Cole,Mackenzie Hughes,Sudarshan Yellamaraju,"$49,500",243.6,$23.57,+371.5%
+7,Ryan Gerard,Christiaan Bezuidenhout,Thorbjorn Olesen,Max Homa,Austin Eckroat,Daniel Brown,"$49,500",243.2,$22.67,+353.5%
+8,Keith Mitchell,Alex Smalley,John Parry,Max Homa,Ricky Castillo,Lee Hodges,"$49,500",242.3,$23.57,+371.5%
+9,Nicolai Hojgaard,Nicolas Echavarria,Michael Brennan,Joel Dahmen,Garrick Higgo,Emiliano Grillo,"$48,100",241.8,$19.27,+285.3%
+10,Max McGreevy,Rasmus Neergaard-Petersen,Davis Thompson,John Parry,Austin Eckroat,Matt Wallace,"$49,500",242.2,$21.69,+333.9%
+11,Keith Mitchell,Rasmus Hojgaard,Rasmus Neergaard-Petersen,Mackenzie Hughes,Zecheng Dou,Sudarshan Yellamaraju,"$49,500",243.5,$21.26,+325.3%
+12,Nicolai Hojgaard,Daniel Berger,Kristoffer Reitan,Jordan L. Smith,William Mouw,Takumi Kanaya,"$49,000",241.3,$18.19,+263.7%
+13,Keith Mitchell,Rasmus Hojgaard,Max McGreevy,Steven Fisk,Adrien Saddier,Matt Wallace,"$50,000",242.7,$20.58,+311.5%
+14,Keith Mitchell,Christiaan Bezuidenhout,Thorbjorn Olesen,Max Homa,Matt Wallace,Sudarshan Yellamaraju,"$48,800",242.1,$21.28,+325.5%
+15,Shane Lowry,Aaron Rai,Kristoffer Reitan,Michael Brennan,Garrick Higgo,Adrien Dumont De Chassart,"$49,900",243.5,$17.84,+256.9%
+16,Ryan Gerard,Davis Thompson,John Parry,Max Homa,Beau Hossler,Austin Eckroat,"$50,000",244.1,$23.56,+371.2%
+17,Ryan Gerard,Keith Mitchell,Davis Thompson,Mackenzie Hughes,Zecheng Dou,Matthieu Pavon,"$49,900",244.5,$21.35,+327.0%
+18,Shane Lowry,Nicolas Echavarria,Michael Brennan,Seamus Power,Jordan L. Smith,Kevin Roy,"$49,500",242.8,$18.26,+265.2%
+19,Davis Thompson,Alex Smalley,Thorbjorn Olesen,Max Homa,Lee Hodges,Matt Wallace,"$48,000",240.9,$20.58,+311.6%
+20,Shane Lowry,Daniel Berger,Jordan L. Smith,Chad Ramey,Garrick Higgo,Chandler Phillips,"$49,200",241.2,$17.68,+253.6%
+21,Rasmus Hojgaard,Max McGreevy,Christiaan Bezuidenhout,John Parry,Chan Kim,Mackenzie Hughes,"$50,000",241.5,$19.15,+283.0%
+22,Daniel Berger,Aaron Rai,Kristoffer Reitan,Nicolas Echavarria,Joel Dahmen,Adrien Dumont De Chassart,"$49,400",239.9,$17.49,+249.8%
+23,Ryan Gerard,Keith Mitchell,Thorbjorn Olesen,Austin Eckroat,Adrien Saddier,Sudarshan Yellamaraju,"$49,900",244.7,$21.04,+320.8%
+24,Keith Mitchell,Rasmus Hojgaard,Ricky Castillo,Jackson Suber,Mackenzie Hughes,Daniel Brown,"$48,600",240.9,$19.83,+296.6%
+25,Shane Lowry,Nicolai Hojgaard,Nicolas Echavarria,Kevin Roy,David Ford,Zachary Bauchou,"$50,000",240.7,$16.66,+233.3%
+26,Nicolai Hojgaard,Daniel Berger,Tom Kim,Garrick Higgo,Emiliano Grillo,William Mouw,"$48,000",240.5,$17.32,+246.4%
+27,Rasmus Hojgaard,Davis Thompson,Christiaan Bezuidenhout,Alex Smalley,Sudarshan Yellamaraju,Matthieu Pavon,"$49,400",239.6,$19.25,+285.1%
+28,Ryan Gerard,Davis Thompson,Christiaan Bezuidenhout,Ricky Castillo,Adrien Saddier,Daniel Brown,"$49,800",242.6,$19.17,+283.5%
+29,Ryan Gerard,Rasmus Hojgaard,John Parry,Lee Hodges,Austin Eckroat,Steven Fisk,"$49,800",243.4,$19.71,+294.1%
+30,Brooks Koepka,Alex Smalley,Thorbjorn Olesen,John Parry,Ricky Castillo,Matt Wallace,"$48,900",240.1,$17.92,+258.4%
+31,Nicolai Hojgaard,Daniel Berger,Joel Dahmen,Jordan L. Smith,Kevin Roy,Emiliano Grillo,"$49,600",242.1,$18.88,+277.5%
+32,Keith Mitchell,Rasmus Hojgaard,Davis Thompson,Austin Eckroat,Matt Wallace,Daniel Brown,"$49,400",243.7,$21.25,+325.0%
+33,Max McGreevy,Alex Smalley,Thorbjorn Olesen,Eric Cole,Austin Eckroat,Mackenzie Hughes,"$48,100",239.9,$19.66,+293.3%
+34,Shane Lowry,Hao-Tong Li,Michael Brennan,Jordan L. Smith,Tom Kim,Takumi Kanaya,"$48,900",241.8,$17.12,+242.4%
+35,Shane Lowry,Daniel Berger,Michael Brennan,Kevin Roy,Chad Ramey,Dylan Wu,"$49,800",240.9,$16.08,+221.7%
+36,Rasmus Hojgaard,Davis Thompson,Christiaan Bezuidenhout,Max Homa,Mackenzie Hughes,Zecheng Dou,"$49,300",242.9,$20.55,+311.1%
+37,Ryan Gerard,Alex Smalley,Thorbjorn Olesen,Lee Hodges,Zecheng Dou,Daniel Brown,"$48,300",241.8,$18.01,+260.3%
+38,Shane Lowry,Nicolai Hojgaard,Joel Dahmen,Matti Schmid,Chandler Phillips,Adrien Dumont De Chassart,"$49,600",240.9,$15.68,+213.6%
+39,Ryan Gerard,Max McGreevy,John Parry,Max Homa,Mackenzie Hughes,Matt Wallace,"$49,800",246.3,$23.16,+363.2%
+40,Shane Lowry,Aaron Rai,Joel Dahmen,Jordan L. Smith,Garrick Higgo,Mark Hubbard,"$49,400",241.7,$16.47,+229.5%
+41,Ryan Gerard,Alex Smalley,John Parry,Eric Cole,Adrien Saddier,Sudarshan Yellamaraju,"$48,700",241.2,$19.56,+291.2%
+42,Nicolai Hojgaard,Hao-Tong Li,Kristoffer Reitan,Michael Brennan,Emiliano Grillo,Chandler Phillips,"$48,700",240.5,$16.36,+227.2%
+43,Shane Lowry,Kristoffer Reitan,Nicolas Echavarria,Seamus Power,Billy Horschel,Tom Kim,"$49,800",240.5,$15.03,+200.6%
+44,Keith Mitchell,Davis Thompson,Alex Smalley,Ricky Castillo,Lee Hodges,Mackenzie Hughes,"$49,500",242.9,$24.19,+383.8%
+45,Nicolai Hojgaard,Aaron Rai,Nicolas Echavarria,Billy Horschel,David Ford,Chandler Phillips,"$48,900",238.5,$15.83,+216.7%
+46,Ryan Gerard,Max McGreevy,Brooks Koepka,Austin Eckroat,Sudarshan Yellamaraju,Daniel Brown,"$49,400",241.3,$19.80,+296.1%
+47,Ryan Gerard,Brooks Koepka,Alex Smalley,Ricky Castillo,Matt Wallace,Zecheng Dou,"$49,800",242.8,$18.17,+263.5%
+48,Keith Mitchell,Max McGreevy,Max Homa,Lee Hodges,Austin Eckroat,Adrien Saddier,"$48,500",241.1,$19.41,+288.2%
+49,Daniel Berger,Aaron Rai,Nicolas Echavarria,Taylor Moore,Tom Kim,David Ford,"$48,800",237.0,$15.05,+201.1%
+50,Shane Lowry,Hao-Tong Li,Kristoffer Reitan,Seamus Power,Garrick Higgo,Adrien Dumont De Chassart,"$49,200",240.1,$15.78,+215.6%
+51,Davis Thompson,Christiaan Bezuidenhout,Alex Smalley,Thorbjorn Olesen,Chan Kim,Mackenzie Hughes,"$48,900",239.9,$19.67,+293.5%
+52,Keith Mitchell,Rasmus Neergaard-Petersen,Davis Thompson,John Parry,Adrien Saddier,Daniel Brown,"$49,800",241.8,$18.92,+278.4%
+53,Ryan Gerard,Keith Mitchell,Beau Hossler,Matt Wallace,Sudarshan Yellamaraju,Matthieu Pavon,"$48,200",241.5,$18.03,+260.6%
+54,Nicolai Hojgaard,Kristoffer Reitan,Michael Brennan,Jordan L. Smith,Kevin Roy,Dylan Wu,"$48,000",241.8,$18.06,+261.2%
+55,Rasmus Hojgaard,Rasmus Neergaard-Petersen,John Parry,Max Homa,Steven Fisk,Zecheng Dou,"$48,800",240.6,$15.94,+218.7%
+56,Nicolai Hojgaard,Aaron Rai,Michael Brennan,Jordan L. Smith,Takumi Kanaya,Zachary Bauchou,"$48,200",240.0,$16.32,+226.4%
+57,Keith Mitchell,Rasmus Hojgaard,Rasmus Neergaard-Petersen,Lee Hodges,Mackenzie Hughes,Matt Wallace,"$50,000",244.2,$20.48,+309.6%
+58,Nicolai Hojgaard,Daniel Berger,Matti Schmid,Austin Smotherman,Jordan L. Smith,Hank Lebioda,"$48,900",238.0,$14.29,+185.8%
+59,Keith Mitchell,Christiaan Bezuidenhout,Alex Smalley,Ricky Castillo,Steven Fisk,Sudarshan Yellamaraju,"$49,000",239.9,$18.84,+276.8%
+60,Ryan Gerard,Rasmus Hojgaard,Thorbjorn Olesen,John Parry,Matt Wallace,Kevin Streelman,"$50,000",241.6,$16.57,+231.3%
+61,Ryan Gerard,Max McGreevy,Max Homa,Adrien Saddier,Zecheng Dou,Matthieu Pavon,"$48,200",240.9,$16.08,+221.5%
+62,Shane Lowry,Aaron Rai,Austin Smotherman,Tom Kim,William Mouw,Takumi Kanaya,"$48,300",239.0,$13.77,+175.3%
+63,Daniel Berger,Hao-Tong Li,Billy Horschel,Taylor Moore,Kevin Roy,Garrick Higgo,"$48,400",236.6,$13.47,+169.5%
+64,Shane Lowry,Hao-Tong Li,Michael Brennan,Billy Horschel,Jordan L. Smith,Adrien Dumont De Chassart,"$49,100",241.3,$16.39,+227.9%
+65,Ryan Gerard,Christiaan Bezuidenhout,Max Homa,Lee Hodges,Matt Wallace,Sudarshan Yellamaraju,"$48,200",242.3,$18.42,+268.4%
+66,Ryan Gerard,Rasmus Hojgaard,Beau Hossler,Steven Fisk,Mackenzie Hughes,Zecheng Dou,"$48,700",242.8,$16.95,+238.9%
+67,Nicolai Hojgaard,Aaron Rai,Billy Horschel,Jordan L. Smith,Chad Ramey,Tom Kim,"$49,500",240.2,$15.74,+214.8%
+68,Keith Mitchell,Rasmus Hojgaard,Thorbjorn Olesen,Ricky Castillo,Adrien Saddier,Chan Kim,"$50,000",241.5,$17.70,+254.0%
+69,Rasmus Neergaard-Petersen,Davis Thompson,Thorbjorn Olesen,Ricky Castillo,Austin Eckroat,Daniel Brown,"$48,100",239.7,$18.28,+265.6%
+70,Max McGreevy,Christiaan Bezuidenhout,John Parry,Ricky Castillo,Beau Hossler,Mackenzie Hughes,"$48,400",240.1,$16.92,+238.4%
+71,Keith Mitchell,Brooks Koepka,Davis Thompson,Beau Hossler,Mackenzie Hughes,Daniel Brown,"$49,000",240.0,$17.52,+250.5%
+72,Shane Lowry,Kristoffer Reitan,Joel Dahmen,Billy Horschel,Chad Ramey,William Mouw,"$48,600",238.8,$13.79,+175.8%
+73,Brooks Koepka,Davis Thompson,Thorbjorn Olesen,Eric Cole,Lee Hodges,Austin Eckroat,"$48,300",236.8,$16.42,+228.5%
+74,Ryan Gerard,Christiaan Bezuidenhout,Thorbjorn Olesen,John Parry,Zecheng Dou,Daniel Brown,"$49,400",242.9,$18.45,+269.0%
+75,Shane Lowry,Nicolai Hojgaard,Michael Brennan,David Ford,William Mouw,Chandler Phillips,"$49,300",242.0,$14.70,+193.9%
+76,Daniel Berger,Hao-Tong Li,Kristoffer Reitan,Nicolas Echavarria,Seamus Power,Mark Hubbard,"$49,100",237.2,$15.01,+200.3%
+77,Daniel Berger,Aaron Rai,Seamus Power,Jordan L. Smith,Kevin Roy,Garrick Higgo,"$48,900",240.2,$16.41,+228.1%
+78,Max McGreevy,Christiaan Bezuidenhout,Alex Smalley,Max Homa,Lee Hodges,Zecheng Dou,"$48,600",239.7,$18.10,+262.0%
+79,Shane Lowry,Nicolas Echavarria,Billy Horschel,Taylor Moore,Austin Smotherman,Adrien Dumont De Chassart,"$48,200",237.1,$13.38,+167.7%
+80,Ryan Gerard,Max McGreevy,Thorbjorn Olesen,Jackson Suber,Austin Eckroat,Chan Kim,"$49,800",240.4,$17.11,+242.2%
+81,Ryan Gerard,Rasmus Hojgaard,Ricky Castillo,Lee Hodges,Adrien Saddier,Zecheng Dou,"$49,200",243.2,$18.45,+268.9%
+82,Max McGreevy,Davis Thompson,Thorbjorn Olesen,Max Homa,Beau Hossler,Zecheng Dou,"$48,700",240.3,$16.42,+228.3%
+83,Ryan Gerard,Rasmus Neergaard-Petersen,Max Homa,Steven Fisk,Mackenzie Hughes,Matt Wallace,"$48,700",243.6,$19.18,+283.5%
+84,Shane Lowry,Daniel Berger,Chad Ramey,Garrick Higgo,Emiliano Grillo,David Ford,"$48,800",239.3,$14.24,+184.7%
+85,Shane Lowry,Nicolai Hojgaard,Matti Schmid,Jordan L. Smith,Dylan Wu,Adrien Dumont De Chassart,"$49,200",241.2,$15.30,+206.0%
+86,Nicolai Hojgaard,Nicolas Echavarria,Michael Brennan,Joel Dahmen,Jordan L. Smith,Carson Young,"$48,200",240.5,$16.20,+224.0%
+87,Rasmus Hojgaard,Davis Thompson,John Parry,Max Homa,Ricky Castillo,Beau Hossler,"$49,800",242.1,$18.82,+276.5%
+88,Max McGreevy,Brooks Koepka,Davis Thompson,Ricky Castillo,Jackson Suber,Mackenzie Hughes,"$49,400",238.5,$15.52,+210.4%
+89,Rasmus Hojgaard,Brooks Koepka,John Parry,Austin Eckroat,Adrien Saddier,Mackenzie Hughes,"$48,200",240.5,$16.75,+235.0%
+90,Aaron Rai,Hao-Tong Li,Michael Brennan,Jordan L. Smith,Kevin Roy,Tom Kim,"$48,200",240.4,$16.86,+237.1%
+91,Keith Mitchell,Christiaan Bezuidenhout,Max Homa,Jackson Suber,Austin Eckroat,Chan Kim,"$48,300",237.6,$15.13,+202.6%
+92,Nicolai Hojgaard,Aaron Rai,Kristoffer Reitan,Joel Dahmen,Tom Kim,Takumi Kanaya,"$49,600",241.0,$15.15,+202.9%
+93,Ryan Gerard,Alex Smalley,Thorbjorn Olesen,Ricky Castillo,Lee Hodges,Sudarshan Yellamaraju,"$49,300",242.7,$19.36,+287.2%
+94,Keith Mitchell,Max McGreevy,Thorbjorn Olesen,Steven Fisk,Mackenzie Hughes,Zecheng Dou,"$48,600",241.6,$17.35,+247.1%
+95,Shane Lowry,Nicolai Hojgaard,Nicolas Echavarria,Garrick Higgo,Carson Young,Takumi Kanaya,"$49,700",241.1,$15.37,+207.4%
+96,Ryan Gerard,Keith Mitchell,Eric Cole,Beau Hossler,Chan Kim,Mackenzie Hughes,"$49,600",241.6,$16.54,+230.9%
+97,Rasmus Neergaard-Petersen,Davis Thompson,Alex Smalley,Eric Cole,Jackson Suber,Lee Hodges,"$48,800",236.2,$13.77,+175.3%
+98,Shane Lowry,Aaron Rai,Michael Brennan,Kevin Roy,Mark Hubbard,Adrien Dumont De Chassart,"$48,800",240.8,$15.31,+206.2%
+99,Ryan Gerard,Keith Mitchell,Max Homa,Austin Eckroat,Adrien Saddier,Daniel Brown,"$49,300",244.3,$23.40,+368.0%
+100,Nicolai Hojgaard,Hao-Tong Li,Seamus Power,Joel Dahmen,Jordan L. Smith,Chad Ramey,"$49,500",239.0,$14.00,+180.0%
+101,Nicolai Hojgaard,Daniel Berger,Michael Brennan,Jordan L. Smith,Garrick Higgo,Mark Hubbard,"$49,300",242.8,$17.13,+242.6%
+102,Shane Lowry,Daniel Berger,Aaron Rai,William Mouw,Dylan Wu,Zachary Bauchou,"$49,500",238.5,$13.40,+168.0%
+103,Shane Lowry,Michael Brennan,Matti Schmid,Austin Smotherman,Chad Ramey,Emiliano Grillo,"$48,000",238.3,$13.32,+166.4%
+104,Ryan Gerard,Davis Thompson,John Parry,Beau Hossler,Steven Fisk,Matt Wallace,"$49,000",242.4,$17.89,+257.9%
+105,Shane Lowry,Hao-Tong Li,Kristoffer Reitan,Chad Ramey,Chandler Phillips,A.J. Ewart,"$48,200",236.8,$12.48,+149.6%
+106,Keith Mitchell,Davis Thompson,John Parry,Max Homa,Matt Wallace,Zecheng Dou,"$48,700",243.3,$21.92,+338.5%
+107,Daniel Berger,Hao-Tong Li,Nicolas Echavarria,Michael Brennan,Joel Dahmen,David Ford,"$48,900",238.9,$15.49,+209.8%
+108,Keith Mitchell,Max McGreevy,Rasmus Neergaard-Petersen,Adrien Saddier,Matt Wallace,Sudarshan Yellamaraju,"$49,100",241.7,$16.83,+236.7%
+109,Shane Lowry,Nicolas Echavarria,Austin Smotherman,Jordan L. Smith,Tom Kim,Garrick Higgo,"$48,300",241.7,$14.90,+198.1%
+110,Ryan Gerard,Max McGreevy,Rasmus Neergaard-Petersen,Beau Hossler,Steven Fisk,Matthieu Pavon,"$49,900",239.6,$15.48,+209.7%
+111,Nicolai Hojgaard,Daniel Berger,Matti Schmid,Austin Smotherman,Kevin Roy,Dylan Wu,"$49,000",238.3,$13.66,+173.1%
+112,Keith Mitchell,Rasmus Neergaard-Petersen,Alex Smalley,John Parry,Mackenzie Hughes,Zecheng Dou,"$49,700",243.4,$19.93,+298.5%
+113,Christiaan Bezuidenhout,Alex Smalley,Thorbjorn Olesen,John Parry,Lee Hodges,Austin Eckroat,"$48,300",239.7,$17.80,+256.0%
+114,Ryan Gerard,Rasmus Hojgaard,Alex Smalley,Lee Hodges,Steven Fisk,Daniel Brown,"$49,800",242.5,$19.00,+280.1%
+115,Nicolai Hojgaard,Kristoffer Reitan,Nicolas Echavarria,Matti Schmid,Chad Ramey,Mark Hubbard,"$48,200",237.4,$13.17,+163.5%
+116,Nicolai Hojgaard,Daniel Berger,Aaron Rai,Emiliano Grillo,Adrien Dumont De Chassart,A.J. Ewart,"$49,000",238.8,$14.01,+180.3%
+117,Shane Lowry,Kristoffer Reitan,Michael Brennan,Jordan L. Smith,Emiliano Grillo,Chandler Phillips,"$48,000",242.1,$17.92,+258.4%
+118,Rasmus Hojgaard,Max McGreevy,Brooks Koepka,Adrien Saddier,Zecheng Dou,Matthieu Pavon,"$48,500",237.4,$14.91,+198.2%
+119,Ryan Gerard,Keith Mitchell,Lee Hodges,Zecheng Dou,Sudarshan Yellamaraju,Daniel Brown,"$48,000",242.3,$18.02,+260.4%
+120,Nicolai Hojgaard,Daniel Berger,Kristoffer Reitan,Billy Horschel,William Mouw,Chandler Phillips,"$49,200",239.8,$14.57,+191.5%
+121,Daniel Berger,Aaron Rai,Hao-Tong Li,Nicolas Echavarria,Mark Hubbard,Takumi Kanaya,"$49,100",237.1,$13.23,+164.7%
+122,Shane Lowry,Hao-Tong Li,Matti Schmid,Jordan L. Smith,Kevin Roy,Garrick Higgo,"$49,200",241.0,$15.21,+204.2%
+123,Ryan Gerard,Brooks Koepka,John Parry,Lee Hodges,Matt Wallace,Matthieu Pavon,"$48,400",239.7,$14.07,+181.4%
+124,Shane Lowry,Daniel Berger,Nicolas Echavarria,Michael Brennan,Dylan Wu,Adrien Dumont De Chassart,"$49,400",241.5,$15.13,+202.7%
+125,Keith Mitchell,Christiaan Bezuidenhout,Max Homa,Ricky Castillo,Beau Hossler,Mackenzie Hughes,"$48,900",241.6,$18.25,+265.1%
+126,Ryan Gerard,Rasmus Neergaard-Petersen,Christiaan Bezuidenhout,Jackson Suber,Chan Kim,Matt Wallace,"$49,900",239.9,$14.29,+185.7%
+127,Ryan Gerard,Rasmus Neergaard-Petersen,Ricky Castillo,Eric Cole,Steven Fisk,Mackenzie Hughes,"$49,200",241.2,$18.05,+260.9%
+128,Daniel Berger,Michael Brennan,Seamus Power,Billy Horschel,Matti Schmid,Austin Smotherman,"$48,000",236.5,$12.02,+140.3%
+129,Ryan Gerard,Rasmus Hojgaard,Ricky Castillo,Austin Eckroat,Matt Wallace,Sudarshan Yellamaraju,"$49,000",244.7,$19.14,+282.7%
+130,Keith Mitchell,Max McGreevy,John Parry,Ricky Castillo,Lee Hodges,Steven Fisk,"$49,300",240.6,$18.34,+266.8%
+131,Shane Lowry,Aaron Rai,Kristoffer Reitan,Seamus Power,Mark Hubbard,Takumi Kanaya,"$49,600",239.1,$14.13,+182.5%
+132,Nicolai Hojgaard,Aaron Rai,Kristoffer Reitan,Michael Brennan,Garrick Higgo,Adam Schenk,"$49,300",240.4,$14.56,+191.1%
+133,Daniel Berger,Hao-Tong Li,Nicolas Echavarria,Jordan L. Smith,Tom Kim,Emiliano Grillo,"$48,000",239.0,$16.28,+225.5%
+134,Ryan Gerard,Rasmus Neergaard-Petersen,Davis Thompson,Beau Hossler,Mackenzie Hughes,Zecheng Dou,"$49,900",243.8,$17.96,+259.3%
+135,Davis Thompson,Christiaan Bezuidenhout,John Parry,Max Homa,Ricky Castillo,Matt Wallace,"$48,500",241.4,$19.38,+287.6%
+136,Shane Lowry,Hao-Tong Li,Billy Horschel,Austin Smotherman,Garrick Higgo,Zachary Bauchou,"$48,400",237.2,$12.25,+144.9%
+137,Rasmus Hojgaard,Brooks Koepka,Thorbjorn Olesen,Max Homa,Austin Eckroat,Ben Silverman,"$48,400",237.5,$13.33,+166.6%
+138,Max McGreevy,Rasmus Neergaard-Petersen,Christiaan Bezuidenhout,Alex Smalley,Daniel Brown,Ben Silverman,"$48,600",236.5,$13.32,+166.4%
+139,Nicolai Hojgaard,Daniel Berger,Taylor Moore,Garrick Higgo,William Mouw,Adrien Dumont De Chassart,"$48,000",238.6,$14.28,+185.6%
+140,Shane Lowry,Aaron Rai,Seamus Power,Taylor Moore,Tom Kim,A.J. Ewart,"$49,300",237.2,$12.92,+158.3%
+141,Nicolai Hojgaard,Kristoffer Reitan,Michael Brennan,Taylor Moore,Kevin Roy,Pontus Nyholm,"$48,000",236.8,$12.03,+140.6%
+142,Shane Lowry,Nicolai Hojgaard,Kristoffer Reitan,Tom Kim,David Ford,Hank Lebioda,"$50,000",240.7,$12.67,+153.5%
+143,Shane Lowry,Aaron Rai,Michael Brennan,Kevin Roy,Carson Young,Takumi Kanaya,"$48,900",239.7,$15.23,+204.5%
+144,Nicolai Hojgaard,Hao-Tong Li,Michael Brennan,Taylor Moore,Garrick Higgo,David Ford,"$48,700",238.9,$12.94,+158.8%
+145,Ryan Gerard,Rasmus Hojgaard,Max Homa,Beau Hossler,Mackenzie Hughes,Matt Wallace,"$49,600",245.7,$20.25,+305.0%
+146,Hao-Tong Li,Kristoffer Reitan,Nicolas Echavarria,Michael Brennan,Seamus Power,Matti Schmid,"$48,100",237.6,$13.96,+179.3%
+147,Rasmus Hojgaard,Christiaan Bezuidenhout,Alex Smalley,John Parry,Austin Eckroat,Sudarshan Yellamaraju,"$49,200",241.5,$19.48,+289.7%
+148,Max McGreevy,Brooks Koepka,Christiaan Bezuidenhout,Lee Hodges,Adrien Saddier,Mackenzie Hughes,"$48,400",238.1,$15.16,+203.3%
+149,Ryan Gerard,Keith Mitchell,John Parry,Austin Eckroat,Steven Fisk,Chan Kim,"$49,900",242.7,$16.37,+227.4%
+150,Ryan Gerard,Davis Thompson,Alex Smalley,Adrien Saddier,Zecheng Dou,Daniel Brown,"$48,700",242.5,$18.23,+264.5%
+
+EXPOSURE SUMMARY,,,,,
+Player,Salary,Projection,Count,Exposure %,DK ID
+Ryan Gerard,"$10,500",44.3,39,26.0%,42130703
+Shane Lowry,"$10,800",43.3,31,20.7%,42130702
+Nicolai Hojgaard,"$10,300",42.7,29,19.3%,42130704
+Keith Mitchell,"$9,900",42.5,29,19.3%,42130705
+Mackenzie Hughes,"$7,100",40.4,28,18.7%,42130756
+Michael Brennan,"$7,900",40.9,25,16.7%,42130724
+John Parry,"$8,100",40.4,25,16.7%,42130721
+Rasmus Hojgaard,"$9,700",42.1,24,16.0%,42130706
+Davis Thompson,"$8,900",40.9,24,16.0%,42130713
+Matt Wallace,"$7,000",40.0,23,15.3%,42130759
+Max Homa,"$7,900",40.3,23,15.3%,42130725
+Daniel Berger,"$9,600",41.0,23,15.3%,42130707
+Alex Smalley,"$8,600",40.5,22,14.7%,42130716
+Jordan L. Smith,"$7,500",40.4,22,14.7%,42130738
+Austin Eckroat,"$7,200",39.6,22,14.7%,42130749
+Max McGreevy,"$9,200",40.9,21,14.0%,42130710
+Ricky Castillo,"$7,800",39.8,20,13.3%,42130727
+Christiaan Bezuidenhout,"$8,800",40.0,20,13.3%,42130714
+Thorbjorn Olesen,"$8,400",40.4,19,12.7%,42130718
+Lee Hodges,"$7,200",38.8,19,12.7%,42130751
+Zecheng Dou,"$6,900",39.2,19,12.7%,42130762
+Kristoffer Reitan,"$8,200",40.3,19,12.7%,42130720
+Aaron Rai,"$9,300",40.6,19,12.7%,42130709
+Nicolas Echavarria,"$8,000",39.9,18,12.0%,42130722
+Garrick Higgo,"$7,200",39.9,17,11.3%,42130750
+Adrien Saddier,"$7,100",39.0,16,10.7%,42130755
+Rasmus Neergaard-Petersen,"$9,100",40.4,16,10.7%,42130711
+Sudarshan Yellamaraju,"$6,800",38.9,16,10.7%,42130770
+Daniel Brown,"$6,700",38.6,16,10.7%,42130772
+Hao-Tong Li,"$8,700",39.4,16,10.7%,42130715
+Kevin Roy,"$7,500",39.6,14,9.3%,42130737
+Beau Hossler,"$7,400",38.6,14,9.3%,42130743
+Tom Kim,"$7,300",39.5,13,8.7%,42130748
+Steven Fisk,"$7,100",38.2,13,8.7%,42130754
+Billy Horschel,"$7,700",38.8,11,7.3%,42130730
+Adrien Dumont De Chassart,"$6,500",38.5,11,7.3%,42130784
+Brooks Koepka,"$9,000",39.0,11,7.3%,42130712
+Joel Dahmen,"$7,800",39.6,10,6.7%,42130728
+Seamus Power,"$7,800",38.7,10,6.7%,42130726
+Emiliano Grillo,"$6,900",38.8,9,6.0%,42130766
+Takumi Kanaya,"$6,700",38.3,9,6.0%,42130775
+Chad Ramey,"$7,400",38.2,9,6.0%,42130742
+Matti Schmid,"$7,500",38.4,9,6.0%,42130739
+William Mouw,"$6,700",38.6,8,5.3%,42130773
+Chandler Phillips,"$6,700",38.4,8,5.3%,42130774
+Chan Kim,"$7,100",37.7,8,5.3%,42130753
+David Ford,"$6,900",38.1,8,5.3%,42130765
+Austin Smotherman,"$7,500",38.7,8,5.3%,42130740
+Eric Cole,"$7,600",38.1,7,4.7%,42130734
+Matthieu Pavon,"$6,600",37.2,7,4.7%,42130779
+Mark Hubbard,"$6,800",37.9,7,4.7%,42130771
+Taylor Moore,"$7,700",37.9,7,4.7%,42130731
+Jackson Suber,"$7,400",37.5,6,4.0%,42130741
+Dylan Wu,"$6,600",37.9,6,4.0%,42130777
+Zachary Bauchou,"$6,500",37.1,4,2.7%,42130783
+Carson Young,"$6,700",37.0,3,2.0%,42130776
+A.J. Ewart,"$6,400",37.2,3,2.0%,42130794
+Hank Lebioda,"$6,500",36.8,2,1.3%,42130788
+Ben Silverman,"$6,200",36.1,2,1.3%,42130807
+Kevin Streelman,"$6,300",34.4,1,0.7%,42130795
+Adam Schenk,"$6,400",36.0,1,0.7%,42130792
+Pontus Nyholm,"$6,400",35.4,1,0.7%,42130789
+Joe Highsmith,"$6,600",35.7,0,0.0%,42130782
+Patton Kizzire,"$6,500",35.2,0,0.0%,42130786
+Jimmy Stanger,"$6,400",34.0,0,0.0%,42130793
+Patrick Fishburn,"$6,400",36.7,0,0.0%,42130791
+Danny Walker,"$6,100",34.6,0,0.0%,42130814
+
+PORTFOLIO STATS,,,,,
+Lineups,150,,,,
+Investment,$750,,,,
+Portfolio ROI,+92.5%,,,,
+Mean Best Payout,$1443.52,,,,
+Unique Players,62/67,,,,
+Sim Time,109.9s,,,,
