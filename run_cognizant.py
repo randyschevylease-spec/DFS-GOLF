@@ -54,11 +54,11 @@ CONTEST_IDS = [
 CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (2).csv"
 DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition.csv"
 CEILING_FILTER = 110
-CEILING_WEIGHT = 0.25
+CEILING_WEIGHT = 0.0
 CANDIDATE_POOL = 20000
-MIN_PROJ_PCT = 0.85
-SALARY_FLOOR_CUSTOM = 49500
-PROJ_FLOOR_CUSTOM = 400
+MIN_PROJ_PCT = 0.0
+SALARY_FLOOR_CUSTOM = None
+PROJ_FLOOR_CUSTOM = None
 
 
 def parse_players(csv_path):
@@ -90,7 +90,9 @@ def parse_players(csv_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Cognizant Classic — Ceiling Portfolio Builder")
-    parser.add_argument("--sims", type=int, default=10000, help="Monte Carlo sims (default: 10000)")
+    parser.add_argument("--sims", type=int, default=10000, help="Monte Carlo sims for harvesting (default: 10000)")
+    parser.add_argument("--presim-factor", type=int, default=5,
+                        help="Portfolio sim multiplier vs --sims (default: 5x)")
     parser.add_argument("--candidates", type=int, default=CANDIDATE_POOL, help="Candidate pool size")
     parser.add_argument("--sheets", action="store_true", help="Export to Google Sheets")
     parser.add_argument("--csv", type=str, default=CSV_PATH, help="Path to projections CSV")
@@ -322,8 +324,10 @@ def main():
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
     print(f"  STEP 2: Generate {args.candidates:,} ceiling-weighted candidates")
-    print(f"  Ceiling weight: {CEILING_WEIGHT} | Salary floor: ${SALARY_FLOOR_CUSTOM:,} | "
-          f"Proj floor: {PROJ_FLOOR_CUSTOM}")
+    sal_label = f"${SALARY_FLOOR_CUSTOM:,}" if SALARY_FLOOR_CUSTOM else "default"
+    proj_label = str(PROJ_FLOOR_CUSTOM) if PROJ_FLOOR_CUSTOM else "none"
+    print(f"  Ceiling weight: {CEILING_WEIGHT} | Salary floor: {sal_label} | "
+          f"Proj floor: {proj_label}")
     print(f"{'='*70}")
 
     candidates = generate_candidates(
@@ -427,20 +431,23 @@ def main():
         print(f"  {players[i]['name']:<28} {players[i]['proj_ownership']:>7.1f}% {sim_own:>7.1f}%")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4: Shared Monte Carlo simulation (wave-aware)
+    # STEP 4: Pre-simulate player scores + Monte Carlo contest sim
     # ══════════════════════════════════════════════════════════════════
+    n_harvest_sims = args.sims
+    n_portfolio_sims = args.presim_factor * args.sims
+    n_presim = n_harvest_sims + n_portfolio_sims
+
     print(f"\n{'='*70}")
-    print(f"  STEP 4: Monte Carlo simulation ({args.sims:,} sims, wave-aware correlation)")
+    print(f"  STEP 4: Pre-simulate {n_presim:,} player score scenarios")
+    print(f"  Phase 1 (harvest): {n_harvest_sims:,} | Phase 2 (portfolio): {n_portfolio_sims:,} ({args.presim_factor}x)")
     print(f"  Same-wave corr: {SAME_WAVE_CORRELATION} | Cross-wave corr: {DIFF_WAVE_CORRELATION}")
     print(f"{'='*70}")
 
-    # Build shared position matrix with wave-aware correlation
     n_players = len(players)
     n_cands = len(candidates)
     n_opps = len(opponents)
 
     # Build SEPARATE candidate and opponent lineup matrices
-    # This allows opponent-only ranking (candidates don't inflate each other's ranks)
     cand_matrix = np.zeros((n_cands, n_players), dtype=np.float32)
     for i, lu in enumerate(candidates):
         for idx in lu:
@@ -466,62 +473,65 @@ def main():
         cov += np.eye(n_players) * 1.0
         L = np.linalg.cholesky(cov)
 
-    # Simulate positions: rank each candidate ONLY against opponents
-    # (not against other candidates — they inflate each other's ranks)
-    # Position = 1 + (# opponents who scored higher) among n_opps + 1 participants
-    positions_matrix = np.empty((n_cands, args.sims), dtype=np.int32)
-    opp_score_sum = np.zeros(n_opps, dtype=np.float64)
-    print(f"  Simulating {args.sims:,} contests: {n_cands:,} candidates vs {n_opps:,} opponents...")
-    print(f"  Ranking: opponent-only (candidates ranked independently against field)")
+    # ── Generate all player score scenarios upfront ──
+    use_mix = n_mixture > 0
+    mix_p_miss, mix_mu_miss, mix_sigma_miss, mix_mu_make, mix_sigma_make, mix_flag = mixture_params
 
+    presim_mem_mb = n_presim * n_players * 4 / 1024 / 1024
+    print(f"  Generating {n_presim:,} correlated score scenarios ({presim_mem_mb:.0f} MB)...")
+    presim_scores = np.empty((n_presim, n_players), dtype=np.float32)
     rng = np.random.default_rng()
+    presim_batch = 5000
+    presim_start = time.time()
+    for batch_start in range(0, n_presim, presim_batch):
+        bs = min(presim_batch, n_presim - batch_start)
+        Z = rng.standard_normal((bs, n_players))
+        X = Z @ L.T
+        if use_mix:
+            s = transform_mixture_scores(
+                X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
+                mix_mu_make, mix_sigma_make, mix_flag)
+        else:
+            s = means[None, :] + X
+            np.maximum(s, 0.0, out=s)
+        presim_scores[batch_start:batch_start + bs] = s.astype(np.float32)
+    presim_elapsed = time.time() - presim_start
+    print(f"  Pre-sim complete in {presim_elapsed:.1f}s ({n_presim/presim_elapsed:,.0f} scenarios/sec)")
+
+    # ── Phase 1: Harvest simulation (first n_harvest_sims scenarios) ──
+    positions_matrix = np.empty((n_cands, n_harvest_sims), dtype=np.int32)
+    opp_score_sum = np.zeros(n_opps, dtype=np.float64)
+    print(f"\n  Phase 1: Simulating {n_harvest_sims:,} contests for opponent harvesting...")
+    print(f"  {n_cands:,} candidates vs {n_opps:,} opponents (opponent-only ranking)")
+
     sim_start = time.time()
     batch_size = 500
     cand_matrix_f32 = cand_matrix.astype(np.float32)
     opp_matrix_f32 = opp_matrix.astype(np.float32)
 
-    use_mix = n_mixture > 0
-    mix_p_miss, mix_mu_miss, mix_sigma_miss, mix_mu_make, mix_sigma_make, mix_flag = mixture_params
+    for batch_start in range(0, n_harvest_sims, batch_size):
+        bs = min(batch_size, n_harvest_sims - batch_start)
+        scores = presim_scores[batch_start:batch_start + bs]
 
-    for batch_start in range(0, args.sims, batch_size):
-        bs = min(batch_size, args.sims - batch_start)
-        Z = rng.standard_normal((bs, n_players))
-        X = Z @ L.T
-        if use_mix:
-            scores = transform_mixture_scores(
-                X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
-                mix_mu_make, mix_sigma_make, mix_flag)
-        else:
-            scores = means[None, :] + X
-            np.maximum(scores, 0.0, out=scores)
+        cand_scores = scores @ cand_matrix_f32.T
+        opp_scores = scores @ opp_matrix_f32.T
 
-        # Score candidates and opponents separately
-        cand_scores = scores.astype(np.float32) @ cand_matrix_f32.T   # (bs, n_cands)
-        opp_scores = scores.astype(np.float32) @ opp_matrix_f32.T     # (bs, n_opps)
-
-        # Accumulate opponent scores for harvesting
         opp_score_sum += opp_scores.sum(axis=0).astype(np.float64)
 
-        # Sort opponent scores ascending for searchsorted
-        opp_sorted = np.sort(opp_scores, axis=1)                      # (bs, n_opps) ascending
-
-        # For each candidate: count opponents who scored HIGHER
-        # searchsorted(side='left') on ascending array gives index of first element >= cand_score
-        # So n_opps - index = number of opponents scoring >= candidate
-        # Position = n_opps - index + 1 (1-indexed, among n_opps + 1 participants)
+        opp_sorted = np.sort(opp_scores, axis=1)
         for s in range(bs):
             insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
             positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
 
     sim_elapsed = time.time() - sim_start
-    print(f"  Simulation complete in {sim_elapsed:.1f}s")
+    print(f"  Phase 1 complete in {sim_elapsed:.1f}s")
     print(f"  Position matrix: {positions_matrix.shape} (ranks among {n_opps + 1} participants)")
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 4b: Harvest top opponent lineups into candidate pool
     # ══════════════════════════════════════════════════════════════════
     HARVEST_COUNT = 500
-    opp_mean_scores = opp_score_sum / args.sims
+    opp_mean_scores = opp_score_sum / n_harvest_sims
 
     print(f"\n{'='*70}")
     print(f"  STEP 4b: Harvest top field lineups into candidate pool")
@@ -543,7 +553,8 @@ def main():
         # Salary/projection check (same constraints as our candidates)
         opp_sal = sum(players[idx]["salary"] for idx in opp_lu)
         opp_proj = sum(players[idx]["projected_points"] for idx in opp_lu)
-        if opp_sal < SALARY_FLOOR_CUSTOM or opp_proj < PROJ_FLOOR_CUSTOM:
+        if (SALARY_FLOOR_CUSTOM and opp_sal < SALARY_FLOOR_CUSTOM) or \
+           (PROJ_FLOOR_CUSTOM and opp_proj < PROJ_FLOOR_CUSTOM):
             continue
         harvested.append(list(opp_lu))
         cand_set.add(opp_key)
@@ -576,10 +587,10 @@ def main():
     print(f"  Candidate pool: {n_orig_cands:,} original + {len(harvested)} harvested = {n_cands:,} total")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4c: Re-simulate with expanded candidate pool
+    # STEP 4c: Re-simulate with expanded candidate pool (Phase 2 presim)
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
-    print(f"  STEP 4c: Re-simulate with expanded candidate pool ({args.sims:,} sims)")
+    print(f"  STEP 4c: Portfolio simulation ({n_portfolio_sims:,} sims, {args.presim_factor}x presim)")
     print(f"{'='*70}")
 
     # Rebuild candidate matrix with expanded pool (opponent matrix unchanged)
@@ -588,41 +599,53 @@ def main():
         for idx in lu:
             cand_matrix[i, idx] = 1.0
 
-    positions_matrix = np.empty((n_cands, args.sims), dtype=np.int32)
-    print(f"  Simulating {args.sims:,} contests: {n_cands:,} candidates vs {n_opps:,} opponents...")
+    positions_matrix = np.empty((n_cands, n_portfolio_sims), dtype=np.int32)
+    print(f"  Simulating {n_portfolio_sims:,} contests: {n_cands:,} candidates vs {n_opps:,} opponents...")
     print(f"  Ranking: opponent-only (candidates ranked independently against field)")
 
-    rng2 = np.random.default_rng()
     sim_start = time.time()
     cand_matrix_f32 = cand_matrix.astype(np.float32)
+    phase2_offset = n_harvest_sims  # use different scenarios than Phase 1
 
-    for batch_start in range(0, args.sims, batch_size):
-        bs = min(batch_size, args.sims - batch_start)
-        Z = rng2.standard_normal((bs, n_players))
-        X = Z @ L.T
-        if use_mix:
-            scores = transform_mixture_scores(
-                X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
-                mix_mu_make, mix_sigma_make, mix_flag)
-        else:
-            scores = means[None, :] + X
-            np.maximum(scores, 0.0, out=scores)
+    for batch_start in range(0, n_portfolio_sims, batch_size):
+        bs = min(batch_size, n_portfolio_sims - batch_start)
+        scores = presim_scores[phase2_offset + batch_start:phase2_offset + batch_start + bs]
 
-        # Score candidates and opponents separately
-        cand_scores = scores.astype(np.float32) @ cand_matrix_f32.T   # (bs, n_cands)
-        opp_scores = scores.astype(np.float32) @ opp_matrix_f32.T     # (bs, n_opps)
+        cand_scores = scores @ cand_matrix_f32.T
+        opp_scores = scores @ opp_matrix_f32.T
 
-        # Sort opponent scores ascending for searchsorted
         opp_sorted = np.sort(opp_scores, axis=1)
-
-        # Rank each candidate against opponents only
         for s in range(bs):
             insert_idx = np.searchsorted(opp_sorted[s], cand_scores[s], side='left')
             positions_matrix[:, batch_start + s] = (n_opps - insert_idx + 1).astype(np.int32)
 
+        done = batch_start + bs
+        if done % 10000 == 0 or done == n_portfolio_sims:
+            elapsed = time.time() - sim_start
+            print(f"    {done:>7,} / {n_portfolio_sims:,} sims ({elapsed:.1f}s)")
+
     sim_elapsed = time.time() - sim_start
-    print(f"  Re-simulation complete in {sim_elapsed:.1f}s")
+    print(f"  Phase 2 complete in {sim_elapsed:.1f}s")
     print(f"  Position matrix: {positions_matrix.shape} (ranks among {n_opps + 1} participants)")
+
+    # Free presim scores — no longer needed, reclaim memory before portfolio optimizer
+    del presim_scores
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 4d: Pre-filter candidates for portfolio optimizer memory
+    # ══════════════════════════════════════════════════════════════════
+    max_needed = sum(c["max_entries"] for c in contests)
+    TOP_CANDIDATES = max(max_needed * 10, 3000)
+    mean_positions = positions_matrix.mean(axis=1)
+    top_idx = np.argsort(mean_positions)[:TOP_CANDIDATES]
+    positions_filtered = positions_matrix[top_idx]
+    candidates_filtered = [candidates[i] for i in top_idx]
+    del positions_matrix
+    print(f"\n  Pre-filtered candidates: {n_cands:,} → {len(candidates_filtered):,} "
+          f"(top {TOP_CANDIDATES:,} by mean position for memory)")
+
+    # Compute cut survival once for filtered candidates
+    cut_survival = compute_cut_survival(candidates_filtered, players, n_portfolio_sims)
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 5: Loop over each contest — payout assignment + portfolio selection
@@ -656,24 +679,20 @@ def main():
         payout_by_pos = build_payout_lookup(payout_table, field_size)
 
         # Scale positions from opponent-only ranking (n_opps + 1) to contest field size
-        # Positions are already ranked against opponents only, so denominator is n_opps + 1
         sim_field = n_opps + 1
         scale = field_size / sim_field
-        scaled = np.rint(positions_matrix * scale).astype(np.int32)
+        scaled = np.rint(positions_filtered * scale).astype(np.int32)
         np.clip(scaled, 1, field_size, out=scaled)
-        payouts = payout_by_pos[scaled]  # (n_cands, n_sims)
+        payouts = payout_by_pos[scaled]  # (n_filtered, n_portfolio_sims)
 
         roi = (payouts.mean(axis=1) - entry_fee) / entry_fee * 100
 
         print(f"  Candidate ROI: mean={roi.mean():+.1f}% | best={roi.max():+.1f}% | "
               f"+EV={int((roi > 0).sum())}/{len(roi)}")
 
-        # Compute cut survival matrix for this contest
-        cut_survival = compute_cut_survival(candidates, players, args.sims)
-
-        # Select portfolio via new optimizer (exclude lineups already in other contests)
+        # Select portfolio via optimizer (exclude lineups already in other contests)
         portfolio = optimize_portfolio(
-            payouts, entry_fee, max_entries, candidates,
+            payouts, entry_fee, max_entries, candidates_filtered,
             n_players=n_players,
             method="greedy",
             diversity_weight=0.4,
@@ -694,7 +713,7 @@ def main():
         # Build lineups with player dicts for CSV export
         lineups = []
         for sel_idx in selected:
-            player_indices = candidates[sel_idx]
+            player_indices = candidates_filtered[sel_idx]
             lineup = [players[i].copy() for i in player_indices]
             lineup.sort(key=lambda p: p["salary"], reverse=True)
             lineups.append(lineup)

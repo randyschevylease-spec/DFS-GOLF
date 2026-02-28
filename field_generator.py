@@ -116,7 +116,8 @@ def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal,
 
 # ── MIP Batch Generation (optimizer, sharp) ───────────────────────────────
 
-def _generate_mip_batch(players, n_lineups, mode, weight_adj, rng):
+def _generate_mip_batch(players, n_lineups, mode, weight_adj, rng,
+                        salary_floor_override=None):
     """Batch-generate MIP-solved lineups with noise for diversity.
 
     mode="optimizer": ±4% noise on projections
@@ -143,7 +144,7 @@ def _generate_mip_batch(players, n_lineups, mode, weight_adj, rng):
             noise = np.exp(rng.normal(0.0, 0.12, size=n))
             obj = (base_proj - penalty * owns) * noise
 
-        result = _solve_mip(players, obj)
+        result = _solve_mip(players, obj, salary_floor_override=salary_floor_override)
         if result is not None:
             lineup_set.add(result)
 
@@ -174,7 +175,8 @@ def _measure_ownership(index_lists, n_players):
 # ── Main Field Generator ─────────────────────────────────────────────────
 
 def generate_field(players, field_size, archetype_weights=None,
-                   ownership_tolerance=0.03, max_iterations=10, seed=None):
+                   ownership_tolerance=0.03, max_iterations=10, seed=None,
+                   min_salary_map=None):
     """Generate a realistic opponent field using archetype-based construction.
 
     Two-phase approach:
@@ -186,6 +188,11 @@ def generate_field(players, field_size, archetype_weights=None,
     Stochastic archetypes (chalk, content, random) use fast Dirichlet-
     multinomial sampling. MIP archetypes (optimizer, sharp) use batch
     MIP solves with noise for diversity.
+
+    Args:
+        min_salary_map: optional dict overriding per-archetype minimum salary.
+                        e.g. {"chalk": 47000, "content": 46000, "random": 40000}
+                        Defaults use SALARY_CAP - offset per archetype.
     """
     rng = np.random.default_rng(seed)
     if seed is not None:
@@ -243,9 +250,13 @@ def generate_field(players, field_size, archetype_weights=None,
                 continue
 
             alpha_probs = _archetype_alpha(arch_name, players, adjusted_probs, rng)
-            min_salary = {"chalk": SALARY_CAP - 1000,
-                          "content": SALARY_CAP - 800,
-                          "random": SALARY_CAP - 3000}.get(arch_name, SALARY_FLOOR)
+            default_mins = {"chalk": SALARY_CAP - 1000,
+                            "content": SALARY_CAP - 800,
+                            "random": SALARY_CAP - 3000}
+            if min_salary_map and arch_name in min_salary_map:
+                min_salary = min_salary_map[arch_name]
+            else:
+                min_salary = default_mins.get(arch_name, SALARY_FLOOR)
 
             lus = _sample_lineups(players, arch_count, alpha_probs, 12.0,
                                   min_sal, min_salary, rng)
@@ -289,17 +300,22 @@ def generate_field(players, field_size, archetype_weights=None,
 
         if arch_name in ("optimizer", "sharp"):
             # MIP batch — high noise for diversity (calibration is stochastic-only)
+            mip_floor = min_salary_map.get(arch_name) if min_salary_map else None
             lus = _generate_mip_batch(players, arch_count, arch_name,
-                                       None, rng)
+                                       None, rng, salary_floor_override=mip_floor)
             for lu in lus:
                 all_lineups.append((lu, arch_name))
 
         else:
             # Stochastic sampling
             alpha_probs = _archetype_alpha(arch_name, players, adjusted_probs, rng)
-            min_salary = {"chalk": SALARY_CAP - 1000,
-                          "content": SALARY_CAP - 800,
-                          "random": SALARY_CAP - 3000}.get(arch_name, SALARY_FLOOR)
+            default_mins = {"chalk": SALARY_CAP - 1000,
+                            "content": SALARY_CAP - 800,
+                            "random": SALARY_CAP - 3000}
+            if min_salary_map and arch_name in min_salary_map:
+                min_salary = min_salary_map[arch_name]
+            else:
+                min_salary = default_mins.get(arch_name, SALARY_FLOOR)
             sal_bias = {"chalk": 5.0, "content": 5.0, "random": 3.0}.get(arch_name, 4.0)
 
             lus = _sample_lineups(players, arch_count, alpha_probs, 12.0,

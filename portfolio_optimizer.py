@@ -140,18 +140,17 @@ def optimize_portfolio_greedy(payouts, entry_fee, n_select, candidates, n_player
 
     mean_payouts = payouts.mean(axis=1)
 
-    # Pre-allocate scratch arrays
-    improvement = np.empty((n_candidates, n_sims), dtype=np.float64)
+    # Pre-allocate scratch arrays (float32 for memory efficiency with large sim counts)
+    improvement = np.empty((n_candidates, n_sims), dtype=np.float32)
     upside_buf = np.empty(n_candidates, dtype=np.float64)
     score_buf = np.empty(n_candidates, dtype=np.float64)
     tail_w = np.zeros(n_sims, dtype=np.float64)
 
     # Apply cut-line penalty to payouts if provided
     if cut_survival is not None:
-        # Scale payouts by survival: dead lineups get 0 payout
-        effective_payouts = payouts * cut_survival
+        effective_payouts = (payouts * cut_survival).astype(np.float32)
     else:
-        effective_payouts = payouts
+        effective_payouts = payouts.astype(np.float32)
 
     # Wave tracking
     if waves is not None:

@@ -760,7 +760,7 @@ def select_portfolio(payouts, entry_fee, n_select, candidates, n_players,
 # ── Candidate Generation ──────────────────────────────────────────────────
 
 def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
-                        min_proj_pct=0.88, candidate_exposure_cap=0.40,
+                        min_proj_pct=0.88, candidate_exposure_cap=1.0,
                         ceiling_pts=None, ceiling_weight=0.0,
                         salary_floor_override=None, proj_floor_override=None):
     """Generate diverse, high-quality candidate lineups via randomized MIP solves.
