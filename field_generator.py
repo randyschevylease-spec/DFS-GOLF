@@ -1,150 +1,77 @@
 """Archetype-Based DFS Field Generator.
 
-Generates N simulated opponent lineups that realistically model a DFS
-tournament field. The field is NOT homogeneous — it contains different
-types of players with different construction strategies:
+Generates N simulated opponent lineups modeling a realistic DFS field.
+Uses shared sampling.py and mip_solver.py — no duplicate code.
 
-  - Chalk:     Heavy on top projected players, boosted ownership
-  - Content:   Follows content-site value plays, tight salary usage
-  - Optimizer: MIP-solved with ±4% noise (simulates real optimizer tools)
-  - Sharp:     MIP-solved with ownership penalty (fades chalk)
-  - Random:    Casual/recreational, salary-biased, loose constraints
-
-Two generation modes for speed at scale:
-  - Stochastic (chalk, content, random): Dirichlet-multinomial sampling
-    with archetype-specific alpha profiles. Generates 1000s/sec.
-  - MIP-based (optimizer, sharp): Batch MIP solves with noise/penalty.
-    ~1ms per solve, deduplicates results.
-
-Iterative ownership calibration adjusts selection weights so the
-resulting field's ownership distribution converges on projected targets.
+Archetypes:
+  - Chalk: Heavy on top projected players, boosted ownership
+  - Content: Follows content-site value plays, tight salary usage
+  - Optimizer: MIP-solved with ±15% noise (simulates optimizer users)
+  - Sharp: MIP-solved with ownership penalty (fades chalk)
+  - Random: Casual/recreational, salary-biased, loose constraints
 """
-import random
+import time
 import numpy as np
 from dataclasses import dataclass
-from engine import _solve_mip
 from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
+from sampling import sample_lineups
+from mip_solver import solve_mip
 
 
 # ── Output Types ──────────────────────────────────────────────────────────
 
 @dataclass
 class FieldLineup:
-    players: list           # List of player indices (into the players array)
-    salary: int             # Total salary used
-    projected_points: float # Sum of player projections
-    geometric_ownership: float  # Geometric mean of individual ownership %s
-    archetype: str          # Which archetype generated this lineup
+    players: list
+    salary: int
+    projected_points: float
+    geometric_ownership: float
+    archetype: str
 
 
 @dataclass
 class GeneratedField:
-    lineups: list           # list[FieldLineup]
-    ownership_validation: dict  # {player_name: {target, actual, delta}}
-    archetype_distribution: dict  # {archetype_name: count}
+    lineups: list
+    ownership_validation: dict
+    archetype_distribution: dict
 
 
 # ── Default Archetype Weights ─────────────────────────────────────────────
 
 DEFAULT_ARCHETYPE_WEIGHTS = {
-    "chalk":     0.25,
-    "content":   0.20,
+    "chalk": 0.25,
+    "content": 0.20,
     "optimizer": 0.25,
-    "sharp":     0.10,
-    "random":    0.20,
+    "sharp": 0.10,
+    "random": 0.20,
 }
-
-
-# ── Dirichlet-Multinomial Sampling (chalk, content, random) ──────────────
-
-def _sample_lineups(players, n_lineups, probs, alpha_scale, min_sal,
-                    min_salary, rng, sal_bias_power=4.0):
-    """Fast Dirichlet-multinomial sampling for stochastic archetypes.
-
-    Same proven algorithm from engine.py that generated 95K+ lineups.
-    """
-    n = len(players)
-    sal_arr = np.array([p["salary"] for p in players], dtype=np.float64)
-    alpha = np.maximum(probs * alpha_scale * n, 0.01)
-    lineups = []
-    attempts = 0
-
-    while len(lineups) < n_lineups and attempts < n_lineups * 25:
-        attempts += 1
-        try:
-            draw = rng.dirichlet(alpha)
-        except Exception:
-            draw = probs / probs.sum() if probs.sum() > 0 else np.ones(n) / n
-
-        selected = []
-        budget = SALARY_CAP
-        avail = np.ones(n, dtype=bool)
-        ok = True
-
-        for slot in range(ROSTER_SIZE):
-            remaining_slots = ROSTER_SIZE - slot - 1
-            min_remaining = remaining_slots * min_sal
-            max_affordable = budget - min_remaining
-
-            afford = (sal_arr <= max_affordable) & avail
-            if not afford.any():
-                ok = False
-                break
-
-            vp = draw * afford
-            sal_weight = (sal_arr / min_sal) ** (sal_bias_power + slot * 1.5)
-            vp = vp * sal_weight * afford
-
-            vp_sum = vp.sum()
-            if vp_sum <= 0:
-                ok = False
-                break
-            vp /= vp_sum
-
-            c = rng.choice(n, p=vp)
-            selected.append(c)
-            budget -= sal_arr[c]
-            avail[c] = False
-
-        if ok and len(selected) == ROSTER_SIZE:
-            total_sal = sal_arr[selected].sum()
-            if min_salary <= total_sal <= SALARY_CAP:
-                lineups.append(selected)
-
-    return lineups
 
 
 # ── MIP Batch Generation (optimizer, sharp) ───────────────────────────────
 
-def _generate_mip_batch(players, n_lineups, mode, weight_adj, rng,
+def _generate_mip_batch(players, n_lineups, mode, rng,
                         salary_floor_override=None):
-    """Batch-generate MIP-solved lineups with noise for diversity.
-
-    mode="optimizer": ±4% noise on projections
-    mode="sharp":     ownership penalty + ±3% noise
-    """
+    """Batch-generate MIP-solved lineups with noise for diversity."""
     n = len(players)
     base_proj = np.array([p["projected_points"] for p in players])
     owns = np.array([p.get("proj_ownership", 5.0) for p in players])
 
     lineup_set = set()
-    target = n_lineups * 3
+    target = int(n_lineups * 1.8)  # Reduced from 3x — 1.8x is plenty with good noise
 
     for _ in range(target):
         if len(lineup_set) >= n_lineups:
             break
 
         if mode == "optimizer":
-            # ±15% noise for diverse optimizer lineups (real field has many different optimizer setups)
             noise = np.exp(rng.normal(0.0, 0.15, size=n))
             obj = base_proj * noise
         else:  # sharp
             penalty = rng.uniform(0.3, 0.8)
-            # ±12% noise + ownership penalty
             noise = np.exp(rng.normal(0.0, 0.12, size=n))
             obj = (base_proj - penalty * owns) * noise
 
-        result = _solve_mip(players, obj, salary_floor_override=salary_floor_override)
+        result = solve_mip(players, obj, salary_floor_override=salary_floor_override)
         if result is not None:
             lineup_set.add(result)
 
@@ -172,6 +99,43 @@ def _measure_ownership(index_lists, n_players):
     return counts / len(index_lists) * 100
 
 
+# ── Archetype Alpha Profiles ─────────────────────────────────────────────
+
+def _archetype_alpha(arch_name, players, base_probs, rng):
+    """Build archetype-specific alpha profile from base probabilities."""
+    n = len(players)
+
+    if arch_name == "chalk":
+        sorted_idx = np.argsort([-p["projected_points"] for p in players])
+        top_set = set(sorted_idx[:15].tolist())
+        alpha = np.zeros(n)
+        for i in range(n):
+            if i in top_set:
+                alpha[i] = base_probs[i] * rng.uniform(1.3, 1.8)
+            else:
+                alpha[i] = base_probs[i] * rng.uniform(0.4, 0.7)
+        return np.maximum(alpha, 0.001)
+
+    elif arch_name == "content":
+        alpha = np.zeros(n)
+        for i in range(n):
+            val = players[i].get("value", 0)
+            if val > 0.5:
+                alpha[i] = base_probs[i] * 1.2
+            else:
+                alpha[i] = base_probs[i]
+        return np.maximum(alpha, 0.001)
+
+    elif arch_name == "random":
+        alpha = np.zeros(n)
+        for i in range(n):
+            alpha[i] = (players[i]["salary"] / 1000) + rng.uniform(0, 3)
+        return np.maximum(alpha, 0.001)
+
+    else:
+        return np.maximum(base_probs, 0.001)
+
+
 # ── Main Field Generator ─────────────────────────────────────────────────
 
 def generate_field(players, field_size, archetype_weights=None,
@@ -180,23 +144,10 @@ def generate_field(players, field_size, archetype_weights=None,
     """Generate a realistic opponent field using archetype-based construction.
 
     Two-phase approach:
-      Phase 1: Pilot calibration — generate small batches to iteratively
-               tune per-player selection probabilities until ownership
-               converges on projected targets.
-      Phase 2: Full generation with calibrated probabilities.
-
-    Stochastic archetypes (chalk, content, random) use fast Dirichlet-
-    multinomial sampling. MIP archetypes (optimizer, sharp) use batch
-    MIP solves with noise for diversity.
-
-    Args:
-        min_salary_map: optional dict overriding per-archetype minimum salary.
-                        e.g. {"chalk": 47000, "content": 46000, "random": 40000}
-                        Defaults use SALARY_CAP - offset per archetype.
+      Phase 1: Pilot calibration for stochastic archetypes
+      Phase 2: Full generation with calibrated probabilities
     """
     rng = np.random.default_rng(seed)
-    if seed is not None:
-        random.seed(seed)
 
     if archetype_weights is None:
         archetype_weights = DEFAULT_ARCHETYPE_WEIGHTS.copy()
@@ -228,20 +179,16 @@ def generate_field(players, field_size, archetype_weights=None,
         pct = count / field_size * 100
         print(f"    {name:<12} {count:>7,} ({pct:.0f}%)", flush=True)
 
-    # Base selection probabilities (from projected ownership)
+    # Base selection probabilities
     base_probs = target_own.copy()
     base_probs /= base_probs.sum()
 
-    # ── Phase 1: Pilot calibration (stochastic archetypes only) ──
-    # MIP archetypes respond weakly to calibration, so we calibrate
-    # the stochastic ones and accept MIP as-is.
+    # Phase 1: Pilot calibration (stochastic archetypes only)
     stochastic_weight = sum(archetype_weights.get(a, 0) for a in ["chalk", "content", "random"])
     adjusted_probs = base_probs.copy()
-
     pilot_size = min(3000, field_size)
 
     for iteration in range(max_iterations):
-        # Generate pilot with current adjusted probs
         pilot = []
         for arch_name in ["chalk", "content", "random"]:
             arch_frac = archetype_weights.get(arch_name, 0) / stochastic_weight if stochastic_weight > 0 else 0
@@ -258,8 +205,8 @@ def generate_field(players, field_size, archetype_weights=None,
             else:
                 min_salary = default_mins.get(arch_name, SALARY_FLOOR)
 
-            lus = _sample_lineups(players, arch_count, alpha_probs, 12.0,
-                                  min_sal, min_salary, rng)
+            lus = sample_lineups(players, arch_count, alpha_probs, 12.0,
+                                 min_sal, min_salary, rng)
             pilot.extend(lus)
 
         if not pilot:
@@ -268,46 +215,42 @@ def generate_field(players, field_size, archetype_weights=None,
         actual_own = _measure_ownership(pilot, n)
         actual_safe = np.maximum(actual_own, 0.01)
         ratio = target_own / actual_safe
-        adjustment = np.power(ratio, 0.5)  # conservative damping
-        adjustment = np.clip(adjustment, 0.5, 2.0)  # tight bounds
+        adjustment = np.power(ratio, 0.5)
+        adjustment = np.clip(adjustment, 0.5, 2.0)
 
         delta = np.abs(actual_own - target_own)
         max_delta = float(delta.max())
         n_bad = int((delta > tolerance_pct).sum())
 
         status = "CONVERGED" if n_bad == 0 else f"{n_bad} players off"
-        print(f"    Pilot [{iteration+1}/{max_iterations}]: "
+        print(f"  Pilot [{iteration+1}/{max_iterations}]: "
               f"max_delta={max_delta:.1f}% | {status}", flush=True)
 
         if n_bad == 0:
             break
 
-        # Update probs with bounded adjustment
         adjusted_probs *= adjustment
         adjusted_probs = np.maximum(adjusted_probs, 0.001)
         adjusted_probs /= adjusted_probs.sum()
 
-    # ── Phase 2: Full generation ──
+    # Phase 2: Full generation
     print(f"  Generating full field ({field_size:,} lineups)...", flush=True)
 
-    all_lineups = []  # list of (index_list, archetype_name) tuples
+    all_lineups = []
 
     for arch_name, arch_count in archetype_counts.items():
         if arch_count <= 0:
             continue
 
-        t0 = __import__('time').time()
+        t0 = time.time()
 
         if arch_name in ("optimizer", "sharp"):
-            # MIP batch — high noise for diversity (calibration is stochastic-only)
             mip_floor = min_salary_map.get(arch_name) if min_salary_map else None
             lus = _generate_mip_batch(players, arch_count, arch_name,
-                                       None, rng, salary_floor_override=mip_floor)
+                                      rng, salary_floor_override=mip_floor)
             for lu in lus:
                 all_lineups.append((lu, arch_name))
-
         else:
-            # Stochastic sampling
             alpha_probs = _archetype_alpha(arch_name, players, adjusted_probs, rng)
             default_mins = {"chalk": SALARY_CAP - 1000,
                             "content": SALARY_CAP - 800,
@@ -318,16 +261,15 @@ def generate_field(players, field_size, archetype_weights=None,
                 min_salary = default_mins.get(arch_name, SALARY_FLOOR)
             sal_bias = {"chalk": 5.0, "content": 5.0, "random": 3.0}.get(arch_name, 4.0)
 
-            lus = _sample_lineups(players, arch_count, alpha_probs, 12.0,
-                                  min_sal, min_salary, rng, sal_bias_power=sal_bias)
+            lus = sample_lineups(players, arch_count, alpha_probs, 12.0,
+                                 min_sal, min_salary, rng, sal_bias_power=sal_bias)
             for lu in lus:
                 all_lineups.append((lu, arch_name))
 
-        elapsed = __import__('time').time() - t0
+        elapsed = time.time() - t0
         actual = sum(1 for _, a in all_lineups if a == arch_name)
         print(f"    {arch_name:<12} {actual:>7,}/{arch_count:>7,} in {elapsed:.1f}s", flush=True)
 
-    # Shuffle
     rng.shuffle(all_lineups)
 
     # Wrap as FieldLineup objects
@@ -370,44 +312,6 @@ def generate_field(players, field_size, archetype_weights=None,
         ownership_validation=ownership_validation,
         archetype_distribution=archetype_dist,
     )
-
-
-def _archetype_alpha(arch_name, players, base_probs, rng):
-    """Build archetype-specific alpha profile from base probabilities."""
-    n = len(players)
-
-    if arch_name == "chalk":
-        # Boost top 15 projected, suppress rest
-        sorted_idx = np.argsort([-p["projected_points"] for p in players])
-        top_set = set(sorted_idx[:15].tolist())
-        alpha = np.zeros(n)
-        for i in range(n):
-            if i in top_set:
-                alpha[i] = base_probs[i] * rng.uniform(1.3, 1.8)
-            else:
-                alpha[i] = base_probs[i] * rng.uniform(0.4, 0.7)
-        return np.maximum(alpha, 0.001)
-
-    elif arch_name == "content":
-        # Ownership + value bias
-        alpha = np.zeros(n)
-        for i in range(n):
-            val = players[i].get("value", 0)
-            if val > 0.5:
-                alpha[i] = base_probs[i] * 1.2
-            else:
-                alpha[i] = base_probs[i]
-        return np.maximum(alpha, 0.001)
-
-    elif arch_name == "random":
-        # Salary-biased with noise
-        alpha = np.zeros(n)
-        for i in range(n):
-            alpha[i] = (players[i]["salary"] / 1000) + rng.uniform(0, 3)
-        return np.maximum(alpha, 0.001)
-
-    else:
-        return np.maximum(base_probs, 0.001)
 
 
 def field_to_index_lists(generated_field):
