@@ -922,9 +922,13 @@ def main():
         csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), csv_filename)
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["G"] * ROSTER_SIZE)
-            for lineup in lineups:
-                writer.writerow([p.get("name_id", p["name"]) for p in lineup])
+            writer.writerow(["G"] * ROSTER_SIZE + ["Salary", "Projection", "Ceiling", "ROI%", "Cash%", "GeoOwn%"])
+            for lineup, stats in zip(lineups, lineup_stats):
+                writer.writerow(
+                    [p.get("name_id", p["name"]) for p in lineup] +
+                    [stats["salary"], round(stats["projection"], 1), round(stats["ceiling"], 1),
+                     round(stats["roi"], 1), round(stats["cash_rate"], 1), round(stats["geomean_own"], 2)]
+                )
         print(f"  CSV: {csv_filename}")
 
         results.append({
