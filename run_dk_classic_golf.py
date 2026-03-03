@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
-"""Cognizant Classic — Ceiling-Maximizing Portfolio Builder.
+"""DraftKings Classic Golf — Ceiling-Maximizing Portfolio Builder.
 
 Builds lineups that maximize upside using projections CSV with CEILING, FLOOR,
-mean projection, ownership, wave, and tee-time data. Uses wave-aware correlation
-(same-wave players share weather/conditions) and ceiling-weighted objectives.
-
-Simulates against all 6 Cognizant Classic contests:
-  - Main (188255232): 71K field, 150 entries, $25
-  - Albatross SE (188323193): 3.9K field, 1 entry, $25
-  - mini-MAX (188323207): 95K field, 150 entries, $5
-  - Birdie (188323208): 27.7K field, 20 entries, $15
-  - Dogleg SE (188323215): 2.1K field, 1 entry, $15
-  - Full Round (188323221): 4.7K field, 18 entries, $10
+mean projection, ownership, wave, and tee-time data. Uses three-layer correlation
+(base + wave + course-fit) and ceiling-weighted objectives.
 
 Usage:
-    python3 -u run_cognizant.py
-    python3 -u run_cognizant.py --sheets          # Also push to Google Sheets
-    python3 -u run_cognizant.py --sims 5000        # Fewer sims for speed
+    python3 -u run_dk_classic_golf.py
+    python3 -u run_dk_classic_golf.py --sheets          # Also push to Google Sheets
+    python3 -u run_dk_classic_golf.py --sims 5000        # Fewer sims for speed
 """
 import sys
 import os
