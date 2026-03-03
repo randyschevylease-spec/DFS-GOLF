@@ -28,6 +28,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (ROSTER_SIZE, SALARY_CAP,
+                     BASE_CORRELATION, WAVE_CORR_BOOST, FIT_CORR_BOOST,
                      SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION,
                      PLAYER_SIM_MULTIPLIER)
 from datagolf_client import get_predictions
@@ -575,7 +576,7 @@ def main():
     print(f"  Portfolio sims: {n_portfolio_sims:,} | Harvest sims: {n_harvest_sims:,}")
     print(f"  Memory est: {n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB "
           f"({n_cands_est:,} cands × {n_portfolio_sims:,} sims)")
-    print(f"  Same-wave corr: {SAME_WAVE_CORRELATION} | Cross-wave corr: {DIFF_WAVE_CORRELATION}")
+    print(f"  Correlation: base={BASE_CORRELATION} + wave={WAVE_CORR_BOOST} + fit={FIT_CORR_BOOST}")
     print(f"{'='*70}")
 
     n_players = len(players)
@@ -595,10 +596,24 @@ def main():
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
-    # Wave-aware covariance matrix
+    # Three-layer correlation: base + wave + course-fit
     waves_arr = np.array(waves)
-    same_wave = (waves_arr[:, None] == waves_arr[None, :])
-    corr_matrix = np.where(same_wave, SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION)
+    same_wave = (waves_arr[:, None] == waves_arr[None, :]).astype(np.float64)
+
+    # Course-fit groups from decomp (driving_dist / driving_acc / baseline)
+    if edge_sources is not None:
+        fit_labels = edge_sources["primary"]
+        fit_ids = np.array([hash(l) for l in fit_labels])
+        same_fit = (fit_ids[:, None] == fit_ids[None, :]).astype(np.float64)
+        n_fit_groups = len(set(fit_labels))
+        fit_dist = {l: fit_labels.count(l) for l in set(fit_labels)}
+        fit_str = " | ".join(f"{k} {v}" for k, v in sorted(fit_dist.items(), key=lambda x: -x[1]))
+        print(f"  Course-fit groups: {n_fit_groups} ({fit_str})")
+    else:
+        same_fit = np.zeros_like(same_wave)
+        print(f"  Course-fit groups: none (no decomp data)")
+
+    corr_matrix = BASE_CORRELATION + WAVE_CORR_BOOST * same_wave + FIT_CORR_BOOST * same_fit
     np.fill_diagonal(corr_matrix, 1.0)
     cov = np.outer(sigmas, sigmas) * corr_matrix
 

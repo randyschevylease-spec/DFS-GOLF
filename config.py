@@ -25,10 +25,13 @@ SALARY_FLOOR = 48000          # Minimum salary usage (96% of cap)
 # 10x is the sweet spot: enough granularity without blowing up memory
 PLAYER_SIM_MULTIPLIER = 10
 
-# ── Correlation Structure ────────────────────────────────────────────────────
-BASE_CORRELATION = 0.11
-SAME_WAVE_CORRELATION = 0.25   # same AM/PM wave → shared conditions
-DIFF_WAVE_CORRELATION = 0.05   # cross-wave → different conditions
+# ── Correlation Structure (additive layers) ──────────────────────────────────
+BASE_CORRELATION = 0.05        # all golfers share course/weather baseline
+WAVE_CORR_BOOST = 0.20        # same AM/PM wave → shared wind/pins/greens
+FIT_CORR_BOOST = 0.10         # same course-fit profile (dist/acc) → co-move
+# Legacy aliases used by other modules
+SAME_WAVE_CORRELATION = BASE_CORRELATION + WAVE_CORR_BOOST
+DIFF_WAVE_CORRELATION = BASE_CORRELATION
 
 # ── Portfolio Optimization ───────────────────────────────────────────────────
 # CVaR tail-risk penalty (λ). Controls upside vs downside tradeoff:
