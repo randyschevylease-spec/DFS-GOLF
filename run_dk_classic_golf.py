@@ -38,14 +38,20 @@ from adaptive_floors import get_candidate_floors, get_opponent_floors, log_floor
 
 # ── Contest definitions (fees/fields pulled live from DK API) ──
 CONTEST_IDS = [
-    "188508560",   # mini-MAX (Arnold Palmer Invitational)
+    "188375740",   # $300K Drive the Green ($5, 150 entries)
+    "188508560",   # $40K mini-MAX ($0.50, 150 entries)
+    "188508574",   # $70K Full Round Special ($10, 18 entries)
+    "188508562",   # $70K Birdie ($3, 20 entries)
+    "188508570",   # $60K Dogleg SE ($33, 1 entry)
 ]
 
-CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (5).csv"
-DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition (1).csv"
+CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (6).csv"
+DK_ENTRIES_PATH = "/Users/rhbot/Downloads/DKEntries (6).csv"
 CEILING_FILTER = 110
 CEILING_WEIGHT = 0.0
 CANDIDATE_POOL = 20000
+W_STAR_CAP = 1000       # w* pre-filter: keep top N candidates after Phase 1
+HARVEST_COUNT = 500      # opponent lineups harvested into candidate pool
 
 
 def parse_players(csv_path):
@@ -90,19 +96,38 @@ def parse_players(csv_path):
                 else:
                     own = 0.0  # will be synthesized downstream
 
-                # Name ID
-                name_id = row.get("DK ID + NAME", f"{dk_id}:{name}").strip()
+                # Name ID — DK upload format: "Player Name (DK_ID)"
+                name_id = row.get("DK ID + NAME", f"{name} ({dk_id})").strip()
 
                 # Make cut probability (from CSV if available)
                 mc = 0.0
-                if "make_cut" in cols and row.get("make_cut", "").strip():
+                if "MAKE CUT" in cols and row.get("MAKE CUT", "").strip():
+                    mc_raw = float(row["MAKE CUT"])
+                    mc = mc_raw / 100.0 if mc_raw > 1.0 else mc_raw
+                elif "make_cut" in cols and row.get("make_cut", "").strip():
                     mc_raw = float(row["make_cut"])
                     mc = mc_raw / 100.0 if mc_raw > 1.0 else mc_raw
+
+                # Decomp edge from CSV (DRIVE DIST / DRIVE ACC columns)
+                drive_dist_adj = 0.0
+                drive_acc_adj = 0.0
+                if "DRIVE DIST" in cols and row.get("DRIVE DIST", "").strip():
+                    drive_dist_adj = float(row["DRIVE DIST"])
+                if "DRIVE ACC" in cols and row.get("DRIVE ACC", "").strip():
+                    drive_acc_adj = float(row["DRIVE ACC"])
 
                 # Scoring/finish breakdown for bimodal
                 scoring_pts = 0.0
                 if "scoring_points" in cols and row.get("scoring_points", "").strip():
                     scoring_pts = float(row["scoring_points"])
+
+                # Determine primary edge from decomp adjustments
+                if drive_dist_adj > 0 and drive_dist_adj >= drive_acc_adj:
+                    primary_edge = "driving_dist"
+                elif drive_acc_adj > 0:
+                    primary_edge = "driving_acc"
+                else:
+                    primary_edge = "baseline"
 
                 player = {
                     "name": name,
@@ -118,6 +143,7 @@ def parse_players(csv_path):
                     "proj_ownership": own,
                     "value": value,
                     "scoring_points": scoring_pts,
+                    "primary_edge": primary_edge,
                 }
                 if mc > 0:
                     player["p_make_cut"] = mc
@@ -129,7 +155,7 @@ def parse_players(csv_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Cognizant Classic — Ceiling Portfolio Builder")
+    parser = argparse.ArgumentParser(description="DK Classic Golf — Ceiling Portfolio Builder")
     parser.add_argument("--sims", type=int, default=10000, help="Monte Carlo sims for harvesting (default: 10000)")
     parser.add_argument("--presim-factor", type=int, default=5,
                         help="Portfolio sim multiplier vs --sims (default: 5x)")
@@ -141,7 +167,7 @@ def main():
     start_time = time.time()
 
     print("=" * 70)
-    print("  COGNIZANT CLASSIC — CEILING-MAXIMIZING PORTFOLIO BUILDER")
+    print("  DK CLASSIC GOLF — CEILING-MAXIMIZING PORTFOLIO BUILDER")
     print("=" * 70)
 
     # ══════════════════════════════════════════════════════════════════
@@ -227,104 +253,43 @@ def main():
         n = _re_mc.sub(r'\s+', ' ', n)
         return n
 
-    # ── Fetch P(make_cut) from DataGolf for mixture distribution ──
-    # Players with make_cut already set from CSV skip the API lookup
+    # ── Make-cut probabilities ──
+    # If all players have make_cut from CSV, skip DataGolf API entirely
     mc_from_csv = sum(1 for p in players if p.get("p_make_cut", 0) > 0)
-    if mc_from_csv > 0:
-        print(f"\n  make_cut from CSV: {mc_from_csv}/{len(players)} players")
-    print(f"  Fetching DataGolf make_cut probabilities...")
-    mc_matched = mc_from_csv
-    try:
-        predictions = get_predictions()
-        # Build lookup: "First Last" → make_cut probability
-        mc_lookup = {}
-        for entry in predictions.get("baseline", []):
-            raw_name = entry.get("player_name", "")
-            mc_val = entry.get("make_cut", 0)
-            if mc_val and mc_val > 0:
-                # Convert "Last, First" → "First Last"
-                if ", " in raw_name:
-                    parts = raw_name.split(", ", 1)
-                    clean_name = f"{parts[1]} {parts[0]}"
-                else:
-                    clean_name = raw_name
-                # DG returns make_cut as %, convert to probability
-                mc_lookup[clean_name] = mc_val / 100.0 if mc_val > 1 else mc_val
+    print(f"\n  make_cut from CSV: {mc_from_csv}/{len(players)} players")
+    if mc_from_csv < len(players):
+        # Fall back to DataGolf API for missing make_cut values
+        print(f"  Fetching DataGolf make_cut for {len(players) - mc_from_csv} unmatched players...")
+        try:
+            predictions = get_predictions()
+            mc_lookup = {}
+            for entry in predictions.get("baseline", []):
+                raw_name = entry.get("player_name", "")
+                mc_val = entry.get("make_cut", 0)
+                if mc_val and mc_val > 0:
+                    if ", " in raw_name:
+                        parts = raw_name.split(", ", 1)
+                        clean_name = f"{parts[1]} {parts[0]}"
+                    else:
+                        clean_name = raw_name
+                    mc_lookup[clean_name] = mc_val / 100.0 if mc_val > 1 else mc_val
 
-        # Build fuzzy matching indexes for unmatched players
-        # Build normalized DG lookup + last-name-only lookup
-        norm_lookup = {}
-        norm_to_name = {}  # normalized → original DG name (for logging)
-        last_name_lookup = {}  # last_name → [(full_name, mc_val)]
-        for dg_name, mc_val in mc_lookup.items():
-            normed = _normalize_name(dg_name)
-            norm_lookup[normed] = mc_val
-            norm_to_name[normed] = dg_name
-            # Use normalized last name (handles "Capan III" → last token "iii" vs real last "capan")
-            normed_last = normed.split()[-1] if normed.split() else ""
-            last_name_lookup.setdefault(normed_last, []).append((dg_name, mc_val))
+            norm_lookup = {}
+            for dg_name, mc_val in mc_lookup.items():
+                norm_lookup[_normalize_name(dg_name)] = mc_val
 
-        fuzzy_matched = []
-        for p in players:
-            # Skip if already set from CSV
-            if p.get("p_make_cut", 0) > 0:
-                continue
-            # 1. Exact match
-            mc = mc_lookup.get(p["name"], 0)
-            if mc > 0:
-                p["p_make_cut"] = mc
-                mc_matched += 1
-                continue
-
-            # 2. Normalized match (handles hyphens, suffixes, middle initials)
-            p_norm = _normalize_name(p["name"])
-            mc = norm_lookup.get(p_norm, 0)
-            if mc > 0:
-                p["p_make_cut"] = mc
-                mc_matched += 1
-                fuzzy_matched.append(f"{p['name']} → {norm_to_name[p_norm]}")
-                continue
-
-            # 3. Last-name unique match (if exactly one DG player shares the last name)
-            p_last = p_norm.split()[-1] if p_norm.split() else ""
-            candidates_ln = last_name_lookup.get(p_last, [])
-            if len(candidates_ln) == 1:
-                p["p_make_cut"] = candidates_ln[0][1]
-                mc_matched += 1
-                fuzzy_matched.append(f"{p['name']} → {candidates_ln[0][0]}")
-                continue
-
-            # 4. Last-name + first-name-prefix or initial match
-            if len(candidates_ln) > 1:
-                p_first = p_norm.split()[0] if p_norm.split() else ""
-                for dg_name, mc_val in candidates_ln:
-                    dg_norm = _normalize_name(dg_name)
-                    dg_first = dg_norm.split()[0] if dg_norm.split() else ""
-                    # Match if one first name starts with the other (Dan↔Daniel)
-                    if (p_first.startswith(dg_first) or dg_first.startswith(p_first)) and len(min(p_first, dg_first)) >= 2:
-                        p["p_make_cut"] = mc_val
-                        mc_matched += 1
-                        fuzzy_matched.append(f"{p['name']} → {dg_name}")
-                        break
-                    # Match by initials: "Seonghyeon" → "S.H." (first letter of DG matches)
-                    # or DG initials expand to player first name initial
-                    if p_first[0] == dg_first[0] and (len(dg_first) <= 2 or len(p_first) <= 2):
-                        p["p_make_cut"] = mc_val
-                        mc_matched += 1
-                        fuzzy_matched.append(f"{p['name']} → {dg_name}")
-                        break
+            for p in players:
                 if p.get("p_make_cut", 0) > 0:
                     continue
-
-            p["p_make_cut"] = 0
-
-        print(f"  Matched make_cut for {mc_matched}/{len(players)} players")
-        if fuzzy_matched:
-            print(f"  Fuzzy matched: {', '.join(fuzzy_matched)}")
-    except Exception as e:
-        print(f"  Warning: Could not fetch make_cut data: {e}")
-        for p in players:
-            p["p_make_cut"] = 0
+                mc = mc_lookup.get(p["name"], 0)
+                if mc <= 0:
+                    mc = norm_lookup.get(_normalize_name(p["name"]), 0)
+                if mc > 0:
+                    p["p_make_cut"] = mc
+        except Exception as e:
+            print(f"  Warning: Could not fetch make_cut data: {e}")
+    else:
+        print(f"  All players have make_cut from CSV — skipping DataGolf API")
 
     # ── Projection-based fallback for unmatched players ──
     # Logistic curve: median projection → 50% make_cut, higher proj → higher p
@@ -340,66 +305,14 @@ def main():
         print(f"  Fallback make_cut for {len(unmatched)}/{len(players)} players "
               f"(logistic, median_proj={median_proj:.1f})")
 
-    # ── Load DataGolf decomposition for edge-source diversity ──
+    # ── Edge-source diversity from CSV decomp columns ──
     EDGE_CATEGORIES = ["baseline", "driving_dist", "driving_acc"]
-    EDGE_COL_MAP = {
-        "driving_dist_adj": "driving_dist",
-        "driving_acc_adj": "driving_acc",
-    }
-    edge_sources = None
-    try:
-        decomp_lookup = {}
-        with open(DECOMP_CSV, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                raw_name = row["player_name"]
-                if ", " in raw_name:
-                    parts = raw_name.split(", ", 1)
-                    clean_name = f"{parts[1]} {parts[0]}"
-                else:
-                    clean_name = raw_name
-                # Find primary edge: highest positive non-baseline adjustment
-                adj_vals = {}
-                for col, cat in EDGE_COL_MAP.items():
-                    if cat != "baseline":
-                        adj_vals[cat] = float(row.get(col, 0))
-                best_cat = max(adj_vals, key=lambda k: adj_vals[k])
-                primary = best_cat if adj_vals[best_cat] > 0 else "baseline"
-                decomp_lookup[clean_name] = primary
-
-        # Match to players using same fuzzy logic
-        player_edges = []
-        edge_matched = 0
-        for p in players:
-            edge = decomp_lookup.get(p["name"])
-            if edge is None:
-                # Try fuzzy: normalized name
-                p_norm = _normalize_name(p["name"])
-                for dname, dedge in decomp_lookup.items():
-                    if _normalize_name(dname) == p_norm:
-                        edge = dedge
-                        break
-            if edge is None:
-                # Last name unique match
-                p_last = p["name"].split()[-1].lower()
-                last_matches = [(dn, de) for dn, de in decomp_lookup.items()
-                                if dn.split()[-1].lower() == p_last]
-                if len(last_matches) == 1:
-                    edge = last_matches[0][1]
-            if edge:
-                player_edges.append(edge)
-                edge_matched += 1
-            else:
-                player_edges.append("baseline")  # default
-
-        edge_sources = {"primary": player_edges, "categories": EDGE_CATEGORIES}
-        # Show distribution
-        from collections import Counter
-        edge_dist = Counter(player_edges)
-        dist_str = " | ".join(f"{k} {v}" for k, v in edge_dist.most_common())
-        print(f"  Edge sources: {edge_matched}/{len(players)} matched ({dist_str})")
-    except Exception as e:
-        print(f"  Warning: Could not load decomposition data: {e}")
+    player_edges = [p.get("primary_edge", "baseline") for p in players]
+    edge_sources = {"primary": player_edges, "categories": EDGE_CATEGORIES}
+    from collections import Counter
+    edge_dist = Counter(player_edges)
+    dist_str = " | ".join(f"{k} {v}" for k, v in edge_dist.most_common())
+    print(f"  Edge sources (from CSV): {dist_str}")
 
     # Compute mixture params for bimodal scoring
     mixture_params = compute_mixture_params(players)
@@ -550,12 +463,13 @@ def main():
     field_driven_sims = max_field * PLAYER_SIM_MULTIPLIER  # 71K × 10 = 710K
     n_portfolio_sims = max(args.presim_factor * args.sims, field_driven_sims)
 
-    # Check if we need to cap sims to fit candidates × sims in memory
-    n_cands_est = len(candidates) + 500  # +500 for harvest
+    # Check if we need to cap sims to fit per-contest position matrices in memory
+    # New: 5 contest matrices × ~1.5K candidates each (after w* filter + harvest)
+    n_cands_est = len(contests) * (W_STAR_CAP + HARVEST_COUNT)
     max_elements = int(MAX_MEMORY_GB * 1024**3 / BYTES_PER_ELEMENT)
     if n_cands_est * n_portfolio_sims > max_elements:
         n_portfolio_sims = max_elements // n_cands_est
-        print(f"  ⚠ Memory cap: {n_cands_est:,} candidates × sims capped to "
+        print(f"  ⚠ Memory cap: {n_cands_est:,} elements × sims capped to "
               f"{n_portfolio_sims:,} sims ({n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB)")
 
     # Harvest phase: 10% of portfolio sims (enough for opponent ranking)
@@ -567,7 +481,7 @@ def main():
     print(f"  Field-driven: {max_field:,} entries × {PLAYER_SIM_MULTIPLIER}x = {field_driven_sims:,} target")
     print(f"  Portfolio sims: {n_portfolio_sims:,} | Harvest sims: {n_harvest_sims:,}")
     print(f"  Memory est: {n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB "
-          f"({n_cands_est:,} cands × {n_portfolio_sims:,} sims)")
+          f"({len(contests)} contests × ~{W_STAR_CAP + HARVEST_COUNT:,} cands × {n_portfolio_sims:,} sims)")
     print(f"  Correlation: base={BASE_CORRELATION} + wave={WAVE_CORR_BOOST} + fit={FIT_CORR_BOOST}")
     print(f"{'='*70}")
 
@@ -668,19 +582,68 @@ def main():
     print(f"  Phase 1 complete in {sim_elapsed:.1f}s")
     print(f"  Position matrix: {positions_matrix.shape} (ranks among {n_opps + 1} participants)")
 
+    # ── Per-contest w* pre-filter: each contest gets its own candidate pool ──
+    sim_field_p1 = n_opps + 1
+    per_contest_candidates = {}  # ci -> list of lineup index-lists
+    filter_batch = 1000
+    all_original_candidates = candidates  # preserve original list for indexing
+
+    print(f"\n  Per-contest w* pre-filter (Phase 1):")
+    print(f"  {'Contest':<42} {'Field':>7} {'Fee':>5} {'+w*':>6} {'Kept':>6}")
+    print(f"  {'-'*42} {'-'*7} {'-'*5} {'-'*6} {'-'*6}")
+
+    union_indices = set()  # track union of all kept indices for overlap stats
+
+    for ci, contest in enumerate(contests):
+        c_field = contest["field"]
+        c_fee = contest["fee"]
+        c_payout_by_pos = build_payout_lookup(contest["profile"]["payouts"], c_field)
+        pos_scale = c_field / sim_field_p1
+
+        # Compute w* for all candidates using THIS contest's payouts/fee
+        w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
+        for b_start in range(0, n_cands, filter_batch):
+            b_end = min(b_start + filter_batch, n_cands)
+            batch_pos = positions_matrix[b_start:b_end]
+            scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
+            np.clip(scaled, 1, c_field, out=scaled)
+            batch_payouts = c_payout_by_pos[scaled]
+            w_batch, _, _ = compute_w_star(batch_payouts, c_fee)
+            w_star_all[b_start:b_end] = w_batch
+
+        n_positive_w = int((w_star_all > 0).sum())
+        actual_cap = min(W_STAR_CAP, n_cands)
+        top_idx = np.argsort(-w_star_all)[:actual_cap]
+        per_contest_candidates[ci] = [all_original_candidates[i] for i in top_idx]
+        union_indices.update(top_idx.tolist())
+
+        cname_short = contest["name"][:42]
+        print(f"  {cname_short:<42} {c_field:>7,} ${c_fee:>4} {n_positive_w:>6,} {actual_cap:>6,}")
+
+    # Overlap summary
+    total_kept = sum(len(v) for v in per_contest_candidates.values())
+    print(f"\n  Union of all per-contest candidates: {len(union_indices):,} unique "
+          f"(of {n_cands:,} original)")
+    print(f"  Total across contests: {total_kept:,} "
+          f"(avg overlap: {total_kept / len(union_indices):.1f}x)" if len(union_indices) > 0 else "")
+
+    del positions_matrix  # free Phase 1 position matrix
+
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4b: Harvest top opponent lineups into candidate pool
+    # STEP 4b: Harvest top opponent lineups into all per-contest pools
     # ══════════════════════════════════════════════════════════════════
-    HARVEST_COUNT = 500
     opp_mean_scores = opp_score_sum / n_harvest_sims
 
     print(f"\n{'='*70}")
-    print(f"  STEP 4b: Harvest top field lineups into candidate pool")
+    print(f"  STEP 4b: Harvest top field lineups into candidate pools")
     print(f"{'='*70}")
     print(f"  Opponent mean score range: {opp_mean_scores.min():.1f} – {opp_mean_scores.max():.1f}")
 
-    # Existing candidate set for dedup
-    cand_set = set(tuple(sorted(c)) for c in candidates)
+    # Dedup against the union of all per-contest candidate sets
+    cand_set = set()
+    for ci in per_contest_candidates:
+        for lu in per_contest_candidates[ci]:
+            cand_set.add(tuple(sorted(lu)))
 
     # Rank opponents by mean simulated score, pick top N unique ones
     top_opp_idx = np.argsort(-opp_mean_scores)
@@ -716,48 +679,86 @@ def main():
         print(f"  Bottom harvested: score={harvested_details[-1]['score']:.1f} "
               f"proj={harvested_details[-1]['proj']:.1f} "
               f"sal=${harvested_details[-1]['salary']:,}")
-        # Show a few examples
         for h in harvested_details[:5]:
             names = ", ".join(h["names"][:6])
             print(f"    {h['score']:.1f} pts | ${h['salary']:,} | {h['proj']:.1f} proj | {names}")
 
-    # Merge harvested lineups into candidate pool
-    n_orig_cands = len(candidates)
-    candidates = candidates + harvested
-    n_cands = len(candidates)
-    print(f"  Candidate pool: {n_orig_cands:,} original + {len(harvested)} harvested = {n_cands:,} total")
+    # Append harvested lineups to every per-contest candidate pool
+    for ci in per_contest_candidates:
+        n_orig = len(per_contest_candidates[ci])
+        per_contest_candidates[ci] = per_contest_candidates[ci] + harvested
+        print(f"  Contest {ci}: {n_orig:,} w*-filtered + {len(harvested)} harvested = "
+              f"{len(per_contest_candidates[ci]):,} total")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4c: Re-simulate with expanded candidate pool (Phase 2 presim)
+    # STEP 4c: Per-contest position simulation (Phase 2)
+    #   Subsample opponents per contest so positions are direct — no scaling.
+    #   Each contest has its own candidate matrix (from per-contest w* filter).
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
-    print(f"  STEP 4c: Portfolio simulation ({n_portfolio_sims:,} sims, {args.presim_factor}x presim)")
+    print(f"  STEP 4c: Per-contest position simulation ({n_portfolio_sims:,} sims)")
     print(f"{'='*70}")
 
-    # Rebuild candidate matrix with expanded pool (opponent matrix unchanged)
-    cand_matrix = np.zeros((n_cands, n_players), dtype=np.float32)
-    for i, lu in enumerate(candidates):
-        for idx in lu:
-            cand_matrix[i, idx] = 1.0
+    # Build per-contest candidate matrices
+    per_contest_cand_matrix = {}
+    for ci in range(len(contests)):
+        ci_cands = per_contest_candidates[ci]
+        n_ci = len(ci_cands)
+        mat = np.zeros((n_ci, n_players), dtype=np.float32)
+        for i, lu in enumerate(ci_cands):
+            for idx in lu:
+                mat[i, idx] = 1.0
+        per_contest_cand_matrix[ci] = mat
+        print(f"  Contest {ci}: {n_ci:,} candidates → matrix {mat.shape}")
 
-    positions_matrix = np.empty((n_cands, n_portfolio_sims), dtype=np.int32)
-    print(f"  Simulating {n_portfolio_sims:,} contests: {n_cands:,} candidates vs {n_opps:,} opponents...")
-    print(f"  Ranking: opponent-only (candidates ranked independently against field)")
+    # Pre-generate fixed opponent subsets per contest
+    sub_rng = np.random.default_rng(seed=42)
+    opp_subsets = {}
+    for ci, contest in enumerate(contests):
+        if contest["field"] - 1 >= n_opps:
+            opp_subsets[ci] = None  # use all opponents
+        else:
+            opp_subsets[ci] = sub_rng.choice(n_opps, size=contest["field"] - 1, replace=False)
+        sub_size = "all" if opp_subsets[ci] is None else f"{len(opp_subsets[ci]):,}"
+        print(f"  Contest {ci}: {contests[ci]['name'][:40]:<40} field={contest['field']:>7,} → "
+              f"opp subset: {sub_size}")
+
+    # Allocate per-contest position matrices (potentially different n_cands per contest)
+    positions_per_contest = {}
+    total_pos_mem = 0
+    for ci in range(len(contests)):
+        n_ci = len(per_contest_candidates[ci])
+        positions_per_contest[ci] = np.empty((n_ci, n_portfolio_sims), dtype=np.int32)
+        total_pos_mem += n_ci * n_portfolio_sims * 4
+
+    total_pos_mem_gb = total_pos_mem / 1024**3
+    max_ci_cands = max(len(per_contest_candidates[ci]) for ci in range(len(contests)))
+    print(f"  Position matrices: {len(contests)} contests, max {max_ci_cands:,} cands × "
+          f"{n_portfolio_sims:,} sims = {total_pos_mem_gb:.1f}GB total")
+    print(f"  Simulating {n_portfolio_sims:,} sims across {len(contests)} contests...")
 
     sim_start = time.time()
-    cand_matrix_f32 = cand_matrix.astype(np.float32)
     phase2_offset = n_harvest_sims  # use different scenarios than Phase 1
 
     for batch_start in range(0, n_portfolio_sims, batch_size):
         bs = min(batch_size, n_portfolio_sims - batch_start)
         scores = presim_scores[phase2_offset + batch_start:phase2_offset + batch_start + bs]
 
-        cand_scores = scores @ cand_matrix_f32.T
-        opp_scores = scores @ opp_matrix_f32.T
+        opp_scores_full = scores @ opp_matrix_f32.T       # (bs, n_opps) — one multiply
 
-        # Vectorized ranking: all sims × all candidates in one searchsorted call
-        positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
-        positions_matrix[:, batch_start:batch_start + bs] = positions.T
+        for ci in range(len(contests)):
+            cand_scores = scores @ per_contest_cand_matrix[ci].T  # (bs, n_ci_cands)
+
+            subset = opp_subsets[ci]
+            if subset is None:
+                opp_sub = opp_scores_full
+                n_opp_sub = n_opps
+            else:
+                opp_sub = opp_scores_full[:, subset]      # column slice, nearly free
+                n_opp_sub = len(subset)
+
+            positions = _rank_candidates_vectorized(opp_sub, cand_scores, n_opp_sub, n_opp_sub + 1)
+            positions_per_contest[ci][:, batch_start:batch_start + bs] = positions.T
 
         done = batch_start + bs
         if done % 10000 == 0 or done == n_portfolio_sims:
@@ -766,65 +767,21 @@ def main():
 
     sim_elapsed = time.time() - sim_start
     print(f"  Phase 2 complete in {sim_elapsed:.1f}s")
-    print(f"  Position matrix: {positions_matrix.shape} (ranks among {n_opps + 1} participants)")
+    for ci in range(len(contests)):
+        subset = opp_subsets[ci]
+        n_opp_sub = n_opps if subset is None else len(subset)
+        n_ci = len(per_contest_candidates[ci])
+        print(f"    Contest {ci}: positions ({n_ci:,} × {n_portfolio_sims:,}) "
+              f"(ranks among {n_opp_sub + 1})")
 
-    # Free presim scores — no longer needed, reclaim memory before portfolio optimizer
+    # Free presim scores and per-contest cand matrices — no longer needed
     del presim_scores
-
-    # ══════════════════════════════════════════════════════════════════
-    # STEP 4d: Filter candidates by w* for optimizer speed + memory
-    #   Always filter to top W*_CAP candidates (speed-driven).
-    #   Also respects memory ceiling as a hard cap.
-    # ══════════════════════════════════════════════════════════════════
-    W_STAR_CAP = 1000  # speed cap: 6-7× headroom over 150-lineup portfolio
-    MAX_WORKING_GB = 40
-    bytes_per_element = 24
-    mem_cap = int(MAX_WORKING_GB * 1024**3 / (n_portfolio_sims * bytes_per_element))
-    max_candidates = min(W_STAR_CAP, mem_cap)
-
-    # Use primary contest payout structure for w* ranking
-    primary_contest = contests[0]
-    primary_field = primary_contest["field"]
-    primary_fee = primary_contest["fee"]
-    primary_payout_by_pos = build_payout_lookup(
-        primary_contest["profile"]["payouts"], primary_field
-    )
-    sim_field = n_opps + 1
-    pos_scale = primary_field / sim_field
-
-    # Compute w* in batches
-    w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
-    filter_batch = 1000
-    for b_start in range(0, n_cands, filter_batch):
-        b_end = min(b_start + filter_batch, n_cands)
-        batch_pos = positions_matrix[b_start:b_end]
-        scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
-        np.clip(scaled, 1, primary_field, out=scaled)
-        batch_payouts = primary_payout_by_pos[scaled]
-        w_batch, _, _ = compute_w_star(batch_payouts, primary_fee)
-        w_star_all[b_start:b_end] = w_batch
-
-    n_positive_w = int((w_star_all > 0).sum())
-    actual_cap = min(max_candidates, n_cands)
-    top_idx = np.argsort(-w_star_all)[:actual_cap]
-    positions_filtered = positions_matrix[top_idx]
-    candidates_filtered = [candidates[i] for i in top_idx]
-
-    mem_est = actual_cap * n_portfolio_sims * bytes_per_element / 1024**3
-    print(f"\n  w* filter: {n_cands:,} → {actual_cap:,} candidates (cap={max_candidates:,}) | "
-          f"+w*={n_positive_w}/{n_cands} | best={w_star_all.max():.6f} | "
-          f"est. {mem_est:.1f}GB")
-    if actual_cap < n_cands:
-        # Show w* cutoff
-        cutoff_w = w_star_all[top_idx[-1]] if len(top_idx) > 0 else 0
-        print(f"  w* cutoff: {cutoff_w:.6f} (#{actual_cap} of {n_cands:,})")
-        del positions_matrix
-
-    # Compute cut survival once for filtered candidates
-    cut_survival = compute_cut_survival(candidates_filtered, players, n_portfolio_sims)
+    del per_contest_cand_matrix
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 5: Loop over each contest — payout assignment + portfolio selection
+    #   Each contest uses its own per-contest candidate pool and cut_survival.
+    #   Cross-contest exclusion is by lineup identity (not index).
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
     print(f"  STEP 5: Contest-specific portfolio selection")
@@ -836,8 +793,6 @@ def main():
     raw_name = contests[0]["name"] if contests else "Unknown"
     evt_match = _re_evt.match(r'PGA TOUR\s+(.*?)(?:\s*\[)', raw_name)
     event_name = evt_match.group(1).strip() if evt_match else raw_name
-    used_candidate_indices = set()  # Track lineups already assigned to prior contests
-
     for ci, contest_def in enumerate(contests):
         cid = contest_def["cid"]
         cname = contest_def["name"]
@@ -846,24 +801,24 @@ def main():
         entry_fee = contest_def["fee"]
         profile = contest_def["profile"]
         payout_table = profile["payouts"]
+        ci_candidates = per_contest_candidates[ci]
 
         print(f"\n  {'─'*60}")
         print(f"  [{ci+1}/{len(contests)}] {cname[:50]}")
         print(f"  Fee: ${entry_fee} | Field: {field_size:,} | Max entries: {max_entries}")
+        print(f"  Candidates: {len(ci_candidates):,} (per-contest pool)")
         print(f"  Payout spots: {profile['payout_spots']:,} | "
               f"1st: ${profile['first_place_prize']:,.0f} | "
               f"Pool: ${profile['prize_pool']:,.0f}")
         print(f"  {'─'*60}")
 
-        # Build payout lookup
-        payout_by_pos = build_payout_lookup(payout_table, field_size)
+        # Build payout lookup matching simulated field size
+        subset = opp_subsets[ci]
+        sim_field = (n_opps + 1) if subset is None else (len(subset) + 1)
+        payout_by_pos = build_payout_lookup(payout_table, sim_field)
 
-        # Scale positions from opponent-only ranking (n_opps + 1) to contest field size
-        sim_field = n_opps + 1
-        scale = field_size / sim_field
-        scaled = np.rint(positions_filtered * scale).astype(np.int32)
-        np.clip(scaled, 1, field_size, out=scaled)
-        payouts = payout_by_pos[scaled]  # (n_filtered, n_portfolio_sims)
+        # Direct positions from per-contest opponent subsample (no scaling)
+        payouts = payout_by_pos[positions_per_contest[ci]]  # (n_ci_cands, n_portfolio_sims)
 
         roi = (payouts.mean(axis=1) - entry_fee) / entry_fee * 100
 
@@ -877,9 +832,13 @@ def main():
             print(f"  w* stats: best={w_star.max():.6f} | median={np.median(finite_w):.6f} | "
                   f"+w*={int((w_star > 0).sum())}/{len(w_star)}")
 
-        # Select portfolio via optimizer (exclude lineups already in other contests)
+        # Compute cut_survival for THIS contest's candidate pool (freed after each iteration)
+        cut_survival = compute_cut_survival(ci_candidates, players, n_portfolio_sims)
+
+        # Select portfolio via optimizer (no cross-contest exclusion —
+        # a lineup elite in multiple contests should be used in all of them)
         portfolio = optimize_portfolio(
-            payouts, entry_fee, max_entries, candidates_filtered,
+            payouts, entry_fee, max_entries, ci_candidates,
             n_players=n_players,
             method="greedy",
             diversity_weight=0.4,
@@ -889,18 +848,17 @@ def main():
             cut_survival=cut_survival,
             edge_sources=edge_sources,
             edge_diversity_weight=5.0,
-            excluded_indices=used_candidate_indices,
         )
 
         selected = portfolio.selected_indices
 
-        # Track these lineups so subsequent contests can't reuse them
-        used_candidate_indices.update(selected)
+        # Free cut_survival for this contest (saves ~1.2GB vs holding all simultaneously)
+        del cut_survival
 
         # Build lineups with player dicts for CSV export
         lineups = []
         for sel_idx in selected:
-            player_indices = candidates_filtered[sel_idx]
+            player_indices = ci_candidates[sel_idx]
             lineup = [players[i].copy() for i in player_indices]
             lineup.sort(key=lambda p: p["salary"], reverse=True)
             lineups.append(lineup)
@@ -1027,6 +985,63 @@ def main():
     print(f"  {'-'*28} {'-'*6} {'-'*7}")
     for name, cnt in sorted(global_exposure.items(), key=lambda x: -x[1])[:20]:
         print(f"  {name:<28} {cnt:>6} {cnt/total_lineups*100:>6.1f}%")
+
+    # ── Export to DKEntries CSV for direct upload ──
+    if results and DK_ENTRIES_PATH:
+        print(f"\n{'='*70}")
+        print(f"  EXPORTING TO DK ENTRIES CSV")
+        print(f"{'='*70}")
+        try:
+            # Read original DKEntries template
+            with open(DK_ENTRIES_PATH, "r") as f:
+                dk_reader = csv.reader(f)
+                dk_header = next(dk_reader)
+                dk_rows = list(dk_reader)
+
+            # Build contest_id → optimized lineups mapping
+            # Each lineup stored as list of "Name (DK_ID)" strings
+            contest_lineups = {}
+            for r in results:
+                cid = r["contest_id"]
+                lineup_name_ids = []
+                for lu in r["lineups"]:
+                    name_ids = [p.get("name_id", f"{p['name']} ({p['dk_id']})") for p in lu]
+                    lineup_name_ids.append(name_ids)
+                contest_lineups[cid] = lineup_name_ids
+
+            # Assign optimized lineups to DKEntries rows
+            # Track how many lineups we've assigned per contest
+            contest_lineup_idx = {cid: 0 for cid in contest_lineups}
+            assigned = 0
+            for row in dk_rows:
+                if len(row) < 10:
+                    continue
+                row_cid = row[2].strip() if len(row) > 2 else ""
+                if row_cid in contest_lineups:
+                    idx = contest_lineup_idx[row_cid]
+                    lus = contest_lineups[row_cid]
+                    if idx < len(lus):
+                        # Replace columns 4-9 (G slots) with optimized lineup
+                        for slot in range(6):
+                            row[4 + slot] = lus[idx][slot]
+                        contest_lineup_idx[row_cid] += 1
+                        assigned += 1
+
+            # Write updated DKEntries
+            dk_output = DK_ENTRIES_PATH.replace(".csv", "_optimized.csv")
+            with open(dk_output, "w", newline="") as f:
+                dk_writer = csv.writer(f)
+                dk_writer.writerow(dk_header)
+                dk_writer.writerows(dk_rows)
+            print(f"  Assigned {assigned} optimized lineups across {len(contest_lineups)} contests")
+            for cid, idx in contest_lineup_idx.items():
+                cname = next((r["name"] for r in results if r["contest_id"] == cid), cid)
+                print(f"    {cname[:45]}: {idx} lineups")
+            print(f"  Output: {dk_output}")
+        except Exception as e:
+            print(f"  DKEntries export ERROR: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ── Export to Google Sheets ──
     if args.sheets and results:
