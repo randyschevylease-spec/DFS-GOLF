@@ -45,11 +45,11 @@ from adaptive_floors import get_candidate_floors, get_opponent_floors, log_floor
 
 # ── Contest definitions (fees/fields pulled live from DK API) ──
 CONTEST_IDS = [
-    "188375740",   # Main (Drive the Green)
+    "188508560",   # mini-MAX (Arnold Palmer Invitational)
 ]
 
-CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (4).csv"
-DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition.csv"
+CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (5).csv"
+DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition (1).csv"
 CEILING_FILTER = 110
 CEILING_WEIGHT = 0.0
 CANDIDATE_POOL = 20000
@@ -348,14 +348,10 @@ def main():
               f"(logistic, median_proj={median_proj:.1f})")
 
     # ── Load DataGolf decomposition for edge-source diversity ──
-    EDGE_CATEGORIES = ["baseline", "form", "sg_fit", "history", "course_fit", "true_sg"]
+    EDGE_CATEGORIES = ["baseline", "driving_dist", "driving_acc"]
     EDGE_COL_MAP = {
-        "baseline": "baseline",
-        "timing_adj": "form",
-        "sg_category_adj": "sg_fit",
-        "course_history_adj": "history",
-        "course_fit_total_adj": "course_fit",
-        "true_sg_adj": "true_sg",
+        "driving_dist_adj": "driving_dist",
+        "driving_acc_adj": "driving_acc",
     }
     edge_sources = None
     try:
