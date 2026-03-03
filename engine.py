@@ -7,7 +7,9 @@ Step 3: Select the best portfolio of N lineups maximizing E[max(portfolio)]
         via greedy marginal-contribution selection with exposure caps.
 """
 import math
+import os
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 from scipy.stats import norm as sp_norm
 from highspy import Highs, ObjSense, HighsModelStatus
 from config import (ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR, CVAR_LAMBDA,
@@ -786,12 +788,11 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
                         min_proj_pct=0.88, candidate_exposure_cap=1.0,
                         ceiling_pts=None, ceiling_weight=0.0,
                         salary_floor_override=None, proj_floor_override=None):
-    """Generate diverse, high-quality candidate lineups via randomized MIP solves.
+    """Generate diverse, high-quality candidate lineups via parallel MIP solves.
 
-    Uses HiGHS for fast (~1ms/solve) binary integer programming with
-    multiplicative noise to explore the solution space. A projection floor
-    constraint ensures every candidate lineup is high-quality, and a post-
-    generation diversity filter caps per-player exposure in the candidate pool.
+    Pre-generates all objective vectors across 4 phases, then distributes
+    MIP solves across CPU cores via ProcessPoolExecutor. Each worker creates
+    fresh HiGHS instances (no shared state).
 
     Args:
         players: list of player dicts
@@ -807,6 +808,7 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
 
     Returns list of unique lineups (each a list of sorted player indices).
     """
+    import time
     n = len(players)
     base_obj = np.array([p["projected_points"] for p in players])
 
@@ -818,7 +820,6 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
 
     proj_pts = np.array([p.get("projected_points", 0) for p in players], dtype=np.float64)
     rng = np.random.default_rng(seed)
-    candidate_set = set()
 
     sal_floor = salary_floor_override if salary_floor_override is not None else None
 
@@ -833,23 +834,15 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
         proj_floor = max_proj * min_proj_pct
         print(f"    Projection floor: {proj_floor:.1f} pts ({min_proj_pct:.0%} of optimal {max_proj:.1f})")
 
-    # Phase 1: Projection-based with noise (increased for more exploration)
-    phase1_noise = noise_scale * 1.3  # more exploration; floor constraint keeps quality
-    batch = 1000
-    for batch_start in range(0, pool_size, batch):
-        before = len(candidate_set)
-        for _ in range(min(batch, pool_size - batch_start)):
-            noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
-            sel = _solve_mip(players, base_obj * noise,
-                             proj_pts=proj_pts, proj_floor=proj_floor,
-                             salary_floor_override=sal_floor)
-            if sel is not None:
-                candidate_set.add(sel)
+    # ── Pre-generate all objective vectors ──
+    t0 = time.time()
+    all_objectives = []
+    phase1_noise = noise_scale * 1.3
 
-        # Early stop if yield drops
-        new = len(candidate_set) - before
-        if batch_start > 0 and new / batch < 0.03:
-            break
+    # Phase 1: Projection-based with noise
+    for _ in range(pool_size):
+        noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
+        all_objectives.append(base_obj * noise)
 
     # Phase 2: Exclude each top player for diversity
     top = sorted(range(n), key=lambda i: base_obj[i], reverse=True)[:12]
@@ -858,11 +851,7 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
             noise = np.exp(rng.normal(0.0, phase1_noise, size=n))
             obj = base_obj * noise
             obj[excluded] = -1e6
-            sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor,
-                             salary_floor_override=sal_floor)
-            if sel is not None:
-                candidate_set.add(sel)
+            all_objectives.append(obj)
 
     # Phase 3: Exclude pairs of top players
     for i in range(min(6, len(top))):
@@ -872,44 +861,50 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
                 obj = base_obj * noise
                 obj[top[i]] = -1e6
                 obj[top[j]] = -1e6
-                sel = _solve_mip(players, obj,
-                                 proj_pts=proj_pts, proj_floor=proj_floor,
-                                 salary_floor_override=sal_floor)
-                if sel is not None:
-                    candidate_set.add(sel)
+                all_objectives.append(obj)
 
     # Phase 4: Salary-tier diversification
     salaries = np.array([float(p["salary"]) for p in players])
     tier_count = max(200, pool_size // 5)
 
-    # Stars & scrubs: 2 players >= $9K, 4 players < $7.5K
     high_idx = np.where(salaries >= 9000)[0]
     low_idx = np.where(salaries < 7500)[0]
     if len(high_idx) >= 2 and len(low_idx) >= 4:
+        mid_mask = (salaries >= 7500) & (salaries < 9000)
         for _ in range(tier_count):
             obj = base_obj * np.exp(rng.normal(0.0, noise_scale * 1.5, size=n))
-            # Heavily penalize mid-range players
-            mid_mask = (salaries >= 7500) & (salaries < 9000)
             obj[mid_mask] *= 0.3
-            sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor,
-                             salary_floor_override=sal_floor)
-            if sel is not None:
-                candidate_set.add(sel)
+            all_objectives.append(obj)
 
-    # Balanced: all players $7K-$9K
     mid_idx = np.where((salaries >= 7000) & (salaries <= 9000))[0]
     if len(mid_idx) >= ROSTER_SIZE:
+        extreme_mask = (salaries < 7000) | (salaries > 9000)
         for _ in range(tier_count):
             obj = base_obj * np.exp(rng.normal(0.0, noise_scale * 1.5, size=n))
-            # Penalize extremes
-            extreme_mask = (salaries < 7000) | (salaries > 9000)
             obj[extreme_mask] *= 0.3
-            sel = _solve_mip(players, obj,
-                             proj_pts=proj_pts, proj_floor=proj_floor,
-                             salary_floor_override=sal_floor)
-            if sel is not None:
-                candidate_set.add(sel)
+            all_objectives.append(obj)
+
+    total_solves = len(all_objectives)
+
+    # ── Distribute across processes ──
+    n_workers = max(1, os.cpu_count() - 1)
+    chunk_size = max(1, total_solves // (n_workers * 4))  # ~4 chunks per worker for balancing
+    chunks = [all_objectives[i:i + chunk_size]
+              for i in range(0, total_solves, chunk_size)]
+    work_items = [(players, chunk, proj_pts, proj_floor, sal_floor)
+                  for chunk in chunks]
+
+    print(f"    Parallel MIP: {total_solves:,} solves across {n_workers} workers "
+          f"({len(chunks)} chunks of ~{chunk_size})", flush=True)
+
+    candidate_set = set()
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        for batch_results in executor.map(_solve_batch, work_items):
+            candidate_set.update(batch_results)
+
+    elapsed = time.time() - t0
+    print(f"    Parallel solve: {elapsed:.1f}s ({total_solves / elapsed:,.0f} solves/sec, "
+          f"{len(candidate_set):,} unique)", flush=True)
 
     raw_count = len(candidate_set)
 
@@ -918,7 +913,7 @@ def generate_candidates(players, pool_size=5000, noise_scale=0.15, seed=None,
     if candidate_exposure_cap < 1.0 and len(all_candidates) > 100:
         all_candidates = _diversity_filter(all_candidates, proj_pts, n,
                                            candidate_exposure_cap)
-        print(f"    Candidates: {raw_count} raw → {len(all_candidates)} after diversity filter "
+        print(f"    Candidates: {raw_count} raw -> {len(all_candidates)} after diversity filter "
               f"(exposure cap {candidate_exposure_cap:.0%})")
     else:
         print(f"    Candidates: {len(all_candidates)}")
@@ -990,3 +985,19 @@ def _solve_mip(players, obj, proj_pts=None, proj_floor=None, salary_floor_overri
 
     sol = h.getSolution()
     return tuple(sorted(i for i in range(n) if sol.col_value[i] > 0.5))
+
+
+def _solve_batch(args):
+    """Worker function for parallel candidate generation.
+
+    Solves a batch of MIP problems and returns list of feasible solutions.
+    Must be top-level function for ProcessPoolExecutor pickling.
+    """
+    players, obj_batch, proj_pts, proj_floor, sal_floor = args
+    results = []
+    for obj in obj_batch:
+        sel = _solve_mip(players, obj, proj_pts=proj_pts, proj_floor=proj_floor,
+                         salary_floor_override=sal_floor)
+        if sel is not None:
+            results.append(sel)
+    return results

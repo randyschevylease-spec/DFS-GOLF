@@ -769,56 +769,52 @@ def main():
     del presim_scores
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4d: Filter candidates by w* for optimizer memory budget
-    #   Target: ~200GB working set max (leaves headroom on 512GB machine)
-    #   If all candidates fit, skip filtering entirely.
+    # STEP 4d: Filter candidates by w* for optimizer speed + memory
+    #   Always filter to top W*_CAP candidates (speed-driven).
+    #   Also respects memory ceiling as a hard cap.
     # ══════════════════════════════════════════════════════════════════
-    MAX_WORKING_GB = 40  # optimizer needs payouts(8B) + survival(4B) + effective(4B) + improvement(4B) + scratch
-    bytes_per_element = 24  # per (candidate × sim) across all optimizer arrays (excludes positions)
-    max_candidates = int(MAX_WORKING_GB * 1024**3 / (n_portfolio_sims * bytes_per_element))
+    W_STAR_CAP = 1000  # speed cap: 6-7× headroom over 150-lineup portfolio
+    MAX_WORKING_GB = 40
+    bytes_per_element = 24
+    mem_cap = int(MAX_WORKING_GB * 1024**3 / (n_portfolio_sims * bytes_per_element))
+    max_candidates = min(W_STAR_CAP, mem_cap)
 
-    if n_cands <= max_candidates:
-        # All candidates fit — no filter needed
-        positions_filtered = positions_matrix
-        candidates_filtered = candidates
-        mem_est = n_cands * n_portfolio_sims * bytes_per_element / 1024**3
-        print(f"\n  All {n_cands:,} candidates → optimizer (est. {mem_est:.1f}GB working set)")
-    else:
-        # Filter by w* to fit memory budget
-        print(f"\n  Memory budget: {MAX_WORKING_GB}GB → max {max_candidates:,} candidates "
-              f"at {n_portfolio_sims:,} sims")
+    # Use primary contest payout structure for w* ranking
+    primary_contest = contests[0]
+    primary_field = primary_contest["field"]
+    primary_fee = primary_contest["fee"]
+    primary_payout_by_pos = build_payout_lookup(
+        primary_contest["profile"]["payouts"], primary_field
+    )
+    sim_field = n_opps + 1
+    pos_scale = primary_field / sim_field
 
-        # Use primary contest payout structure for w* ranking
-        primary_contest = contests[0]
-        primary_field = primary_contest["field"]
-        primary_fee = primary_contest["fee"]
-        primary_payout_by_pos = build_payout_lookup(
-            primary_contest["profile"]["payouts"], primary_field
-        )
-        sim_field = n_opps + 1
-        pos_scale = primary_field / sim_field
+    # Compute w* in batches
+    w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
+    filter_batch = 1000
+    for b_start in range(0, n_cands, filter_batch):
+        b_end = min(b_start + filter_batch, n_cands)
+        batch_pos = positions_matrix[b_start:b_end]
+        scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
+        np.clip(scaled, 1, primary_field, out=scaled)
+        batch_payouts = primary_payout_by_pos[scaled]
+        w_batch, _, _ = compute_w_star(batch_payouts, primary_fee)
+        w_star_all[b_start:b_end] = w_batch
 
-        # Compute w* in batches — only the w* scalar survives each batch
-        w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
-        filter_batch = 1000
-        for b_start in range(0, n_cands, filter_batch):
-            b_end = min(b_start + filter_batch, n_cands)
-            batch_pos = positions_matrix[b_start:b_end]
-            scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
-            np.clip(scaled, 1, primary_field, out=scaled)
-            batch_payouts = primary_payout_by_pos[scaled]
-            w_batch, _, _ = compute_w_star(batch_payouts, primary_fee)
-            w_star_all[b_start:b_end] = w_batch
+    n_positive_w = int((w_star_all > 0).sum())
+    actual_cap = min(max_candidates, n_cands)
+    top_idx = np.argsort(-w_star_all)[:actual_cap]
+    positions_filtered = positions_matrix[top_idx]
+    candidates_filtered = [candidates[i] for i in top_idx]
 
-        top_idx = np.argsort(-w_star_all)[:max_candidates]
-        positions_filtered = positions_matrix[top_idx]
-        candidates_filtered = [candidates[i] for i in top_idx]
-
-        n_positive_w = int((w_star_all > 0).sum())
-        mem_est = max_candidates * n_portfolio_sims * bytes_per_element / 1024**3
-        print(f"  w* filter: {n_cands:,} → {max_candidates:,} candidates | "
-              f"+w*={n_positive_w}/{n_cands} | best={w_star_all.max():.6f} | "
-              f"est. {mem_est:.1f}GB")
+    mem_est = actual_cap * n_portfolio_sims * bytes_per_element / 1024**3
+    print(f"\n  w* filter: {n_cands:,} → {actual_cap:,} candidates (cap={max_candidates:,}) | "
+          f"+w*={n_positive_w}/{n_cands} | best={w_star_all.max():.6f} | "
+          f"est. {mem_est:.1f}GB")
+    if actual_cap < n_cands:
+        # Show w* cutoff
+        cutoff_w = w_star_all[top_idx[-1]] if len(top_idx) > 0 else 0
+        print(f"  w* cutoff: {cutoff_w:.6f} (#{actual_cap} of {n_cands:,})")
         del positions_matrix
 
     # Compute cut survival once for filtered candidates
