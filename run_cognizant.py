@@ -28,7 +28,8 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (ROSTER_SIZE, SALARY_CAP,
-                     SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION)
+                     SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION,
+                     PLAYER_SIM_MULTIPLIER)
 from datagolf_client import get_predictions
 from dk_contests import fetch_contest
 from engine import (generate_candidates, simulate_contest,
@@ -36,52 +37,98 @@ from engine import (generate_candidates, simulate_contest,
                     transform_mixture_scores, _rank_candidates_vectorized)
 from field_generator import (generate_field as generate_field_archetypes,
                              field_to_index_lists, DEFAULT_ARCHETYPE_WEIGHTS)
-from portfolio_optimizer import (optimize_portfolio, compute_cut_survival,
-                                  check_wave_coverage)
+from portfolio_optimizer import (optimize_portfolio, compute_cut_survival)
 from run_all import (simulate_positions, build_payout_lookup, assign_payouts,
                      export_all_to_sheets)
+from log_utility import compute_w_star
+from adaptive_floors import get_candidate_floors, get_opponent_floors, log_floor_config
 
 # ── Contest definitions (fees/fields pulled live from DK API) ──
 CONTEST_IDS = [
-    "188255232",   # Main (Drive the Green)
-    "188323193",   # Albatross SE
-    "188323207",   # mini-MAX
-    "188323208",   # Birdie
-    "188323215",   # Dogleg SE
-    "188323221",   # Full Round
+    "188375740",   # Main (Drive the Green)
 ]
 
-CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (2).csv"
+CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (4).csv"
 DECOMP_CSV = "/Users/rhbot/Downloads/dg_decomposition.csv"
 CEILING_FILTER = 110
 CEILING_WEIGHT = 0.0
 CANDIDATE_POOL = 20000
-MIN_PROJ_PCT = 0.0
-SALARY_FLOOR_CUSTOM = None
-PROJ_FLOOR_CUSTOM = None
 
 
 def parse_players(csv_path):
-    """Parse the projections CSV and return player list with all fields."""
+    """Parse the projections CSV and return player list with all fields.
+
+    Supports two CSV formats:
+      - Full format: dk_name, DK ID + NAME, FLOOR, CEILING, projected_ownership, ...
+      - DataGolf export: dk_name, datagolf_name, make_cut, scoring_points, ...
+    Missing columns are derived from available data.
+    """
     players = []
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
+        cols = set(reader.fieldnames or [])
         for row in reader:
             try:
+                name = row["dk_name"].strip()
+                dk_id = int(row["dk_id"])
+                salary = int(row["dk_salary"])
+                proj = float(row["total_points"])
+                sd = float(row["std_dev"])
+                value = float(row.get("value", 0) or 0)
+
+                # Wave / tee time
+                wave = int(row.get("early_late_wave", 0) or 0)
+                tee_time = row.get("tee_time", "N/A").strip()
+
+                # Ceiling / floor: use CSV if available, else derive from proj + std_dev
+                if "CEILING" in cols and row.get("CEILING"):
+                    ceiling = float(row["CEILING"])
+                else:
+                    ceiling = proj + 2.0 * sd
+
+                if "FLOOR" in cols and row.get("FLOOR"):
+                    floor_val = float(row["FLOOR"])
+                else:
+                    floor_val = max(proj - 1.0 * sd, 0)
+
+                # Ownership
+                if "projected_ownership" in cols and row.get("projected_ownership"):
+                    own = float(row["projected_ownership"])
+                else:
+                    own = 0.0  # will be synthesized downstream
+
+                # Name ID
+                name_id = row.get("DK ID + NAME", f"{dk_id}:{name}").strip()
+
+                # Make cut probability (from CSV if available)
+                mc = 0.0
+                if "make_cut" in cols and row.get("make_cut", "").strip():
+                    mc_raw = float(row["make_cut"])
+                    mc = mc_raw / 100.0 if mc_raw > 1.0 else mc_raw
+
+                # Scoring/finish breakdown for bimodal
+                scoring_pts = 0.0
+                if "scoring_points" in cols and row.get("scoring_points", "").strip():
+                    scoring_pts = float(row["scoring_points"])
+
                 player = {
-                    "name": row["dk_name"].strip(),
-                    "name_id": row["DK ID + NAME"].strip(),
-                    "dk_id": int(row["dk_id"]),
-                    "salary": int(row["dk_salary"]),
-                    "projected_points": float(row["total_points"]),
-                    "std_dev": float(row["std_dev"]),
-                    "tee_time": row["tee_time"].strip(),
-                    "wave": int(row["early_late_wave"]),
-                    "floor": float(row["FLOOR"]),
-                    "ceiling": float(row["CEILING"]),
-                    "proj_ownership": float(row["projected_ownership"]),
-                    "value": float(row["value"]),
+                    "name": name,
+                    "name_id": name_id,
+                    "dk_id": dk_id,
+                    "salary": salary,
+                    "projected_points": proj,
+                    "std_dev": sd,
+                    "tee_time": tee_time,
+                    "wave": wave,
+                    "floor": floor_val,
+                    "ceiling": ceiling,
+                    "proj_ownership": own,
+                    "value": value,
+                    "scoring_points": scoring_pts,
                 }
+                if mc > 0:
+                    player["p_make_cut"] = mc
+
                 players.append(player)
             except (ValueError, KeyError) as e:
                 print(f"  Warning: skipping row {row.get('dk_name', '?')}: {e}")
@@ -115,13 +162,43 @@ def main():
     print(f"  Parsed {len(all_players)} players from CSV")
 
     # Quality filter: remove players where CEILING < threshold
-    players = [p for p in all_players if p["ceiling"] >= CEILING_FILTER]
-    removed = len(all_players) - len(players)
-    print(f"  CEILING filter (>= {CEILING_FILTER}): removed {removed} players")
+    # Skip filter if ceiling was derived (not from CSV) — threshold was calibrated for CSV ceilings
+    has_csv_ceiling = any("CEILING" in open(args.csv).readline() for _ in [1])
+    if has_csv_ceiling and CEILING_FILTER > 0:
+        players = [p for p in all_players if p["ceiling"] >= CEILING_FILTER]
+        removed = len(all_players) - len(players)
+        print(f"  CEILING filter (>= {CEILING_FILTER}): removed {removed} players")
+    else:
+        players = all_players
+        print(f"  CEILING filter: skipped (ceiling derived from proj + 2*std_dev)")
     print(f"  Active pool: {len(players)} players")
 
     # Sort by projected points
     players.sort(key=lambda p: p["projected_points"], reverse=True)
+
+    # Synthesize ownership from projections if not in CSV
+    # Realistic DFS golf ownership: chalk ~30%, field tapers to ~2-4%
+    # Uses linear projection weighting with cap at 40% per player
+    has_ownership = any(p["proj_ownership"] > 0 for p in players)
+    if not has_ownership:
+        projs = np.array([p["projected_points"] for p in players])
+        proj_min = projs.min()
+        spread = projs.max() - proj_min
+        if spread < 1:
+            spread = 1.0
+        # Linear weights: top player gets highest, bottom gets near-zero
+        linear_w = (projs - proj_min) / spread
+        linear_w = np.maximum(linear_w, 0.05)  # floor so everyone has some ownership
+        raw_own = linear_w / linear_w.sum() * 600  # ~600% total (6-man lineups)
+        # Cap individual ownership at 40% (realistic DFS max)
+        np.minimum(raw_own, 40.0, out=raw_own)
+        # Re-normalize after cap to maintain ~600% total
+        synth_own = raw_own / raw_own.sum() * 600
+        for p, own in zip(players, synth_own):
+            p["proj_ownership"] = round(float(own), 1)
+        print(f"  Ownership synthesized from projections (total: {synth_own.sum():.0f}%)")
+        top5 = sorted(players, key=lambda x: x["proj_ownership"], reverse=True)[:5]
+        print(f"  Top ownership: {', '.join(f'{p['name']} {p['proj_ownership']:.1f}%' for p in top5)}")
 
     # Wave split
     am_count = sum(1 for p in players if p["wave"] == 1)
@@ -158,8 +235,12 @@ def main():
         return n
 
     # ── Fetch P(make_cut) from DataGolf for mixture distribution ──
-    print(f"\n  Fetching DataGolf make_cut probabilities...")
-    mc_matched = 0
+    # Players with make_cut already set from CSV skip the API lookup
+    mc_from_csv = sum(1 for p in players if p.get("p_make_cut", 0) > 0)
+    if mc_from_csv > 0:
+        print(f"\n  make_cut from CSV: {mc_from_csv}/{len(players)} players")
+    print(f"  Fetching DataGolf make_cut probabilities...")
+    mc_matched = mc_from_csv
     try:
         predictions = get_predictions()
         # Build lookup: "First Last" → make_cut probability
@@ -192,6 +273,9 @@ def main():
 
         fuzzy_matched = []
         for p in players:
+            # Skip if already set from CSV
+            if p.get("p_make_cut", 0) > 0:
+                continue
             # 1. Exact match
             mc = mc_lookup.get(p["name"], 0)
             if mc > 0:
@@ -248,6 +332,20 @@ def main():
         print(f"  Warning: Could not fetch make_cut data: {e}")
         for p in players:
             p["p_make_cut"] = 0
+
+    # ── Projection-based fallback for unmatched players ──
+    # Logistic curve: median projection → 50% make_cut, higher proj → higher p
+    # k calibrated so +10 pts above median ≈ 80% make_cut
+    unmatched = [p for p in players if p.get("p_make_cut", 0) <= 0]
+    if unmatched:
+        projs = np.array([p["projected_points"] for p in players])
+        median_proj = np.median(projs)
+        k_logistic = 0.139  # ln(4)/10 — +10 pts → ~80%, -10 pts → ~20%
+        for p in unmatched:
+            z = k_logistic * (p["projected_points"] - median_proj)
+            p["p_make_cut"] = 1.0 / (1.0 + np.exp(-z))
+        print(f"  Fallback make_cut for {len(unmatched)}/{len(players)} players "
+              f"(logistic, median_proj={median_proj:.1f})")
 
     # ── Load DataGolf decomposition for edge-source diversity ──
     EDGE_CATEGORIES = ["baseline", "form", "sg_fit", "history", "course_fit", "true_sg"]
@@ -320,40 +418,10 @@ def main():
     print(f"  Mixture distribution: {n_mixture}/{len(players)} players with bimodal scores")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 2: Generate ceiling-weighted candidates
+    # STEP 2: Fetch all contest details from DK API
     # ══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
-    print(f"  STEP 2: Generate {args.candidates:,} ceiling-weighted candidates")
-    sal_label = f"${SALARY_FLOOR_CUSTOM:,}" if SALARY_FLOOR_CUSTOM else "default"
-    proj_label = str(PROJ_FLOOR_CUSTOM) if PROJ_FLOOR_CUSTOM else "none"
-    print(f"  Ceiling weight: {CEILING_WEIGHT} | Salary floor: {sal_label} | "
-          f"Proj floor: {proj_label}")
-    print(f"{'='*70}")
-
-    candidates = generate_candidates(
-        players,
-        pool_size=args.candidates,
-        min_proj_pct=MIN_PROJ_PCT,
-        ceiling_pts=ceiling_pts,
-        ceiling_weight=CEILING_WEIGHT,
-        salary_floor_override=SALARY_FLOOR_CUSTOM,
-        proj_floor_override=PROJ_FLOOR_CUSTOM,
-    )
-    print(f"  Unique candidates: {len(candidates):,}")
-
-    # Candidate stats
-    cand_projs = [sum(players[i]["projected_points"] for i in c) for c in candidates]
-    cand_ceils = [sum(players[i]["ceiling"] for i in c) for c in candidates]
-    cand_sals = [sum(players[i]["salary"] for i in c) for c in candidates]
-    print(f"  Avg projection: {np.mean(cand_projs):.1f} | "
-          f"Avg ceiling: {np.mean(cand_ceils):.1f} | "
-          f"Avg salary: ${np.mean(cand_sals):,.0f}")
-
-    # ══════════════════════════════════════════════════════════════════
-    # STEP 2.5: Fetch all contest details from DK API
-    # ══════════════════════════════════════════════════════════════════
-    print(f"\n{'='*70}")
-    print(f"  STEP 2.5: Fetching contest details from DraftKings API")
+    print(f"  STEP 2: Fetching contest details from DraftKings API")
     print(f"{'='*70}")
 
     contests = []
@@ -384,6 +452,52 @@ def main():
     for i, c in enumerate(contests):
         invest = c["max_entries"] * c["fee"]
         print(f"    {i+1}. ${invest:>6,} — {c['name'][:50]}")
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 2.5: Compute adaptive floors from primary contest
+    # ══════════════════════════════════════════════════════════════════
+    from mip_solver import solve_mip as _solve_mip_floor
+    _base_obj = np.array([p["projected_points"] for p in players])
+    _optimal = _solve_mip_floor(players, _base_obj)
+    optimal_proj = sum(players[i]["projected_points"] for i in _optimal) if _optimal else 362.0
+
+    primary = contests[0]
+    payout_pct = primary["profile"]["payout_spots"] / primary["field"]
+
+    cand_floors = get_candidate_floors(optimal_proj, primary["field"], primary["fee"], payout_pct)
+    opp_floors = get_opponent_floors(optimal_proj, primary["field"], primary["fee"], payout_pct)
+    log_floor_config(cand_floors, optimal_proj, label="candidates")
+    log_floor_config(opp_floors, optimal_proj, label="opponents")
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 2.5b: Generate ceiling-weighted candidates
+    # ══════════════════════════════════════════════════════════════════
+    print(f"\n{'='*70}")
+    print(f"  STEP 2.5b: Generate {args.candidates:,} ceiling-weighted candidates")
+    sal_label = f"${cand_floors.salary_floor:,}" if cand_floors.salary_floor else "default"
+    proj_label = f"{cand_floors.proj_floor:.1f}" if cand_floors.proj_floor else "none"
+    print(f"  Ceiling weight: {CEILING_WEIGHT} | Salary floor: {sal_label} | "
+          f"Proj floor: {proj_label}")
+    print(f"{'='*70}")
+
+    candidates = generate_candidates(
+        players,
+        pool_size=args.candidates,
+        min_proj_pct=0.0,
+        ceiling_pts=ceiling_pts,
+        ceiling_weight=CEILING_WEIGHT,
+        salary_floor_override=cand_floors.salary_floor,
+        proj_floor_override=cand_floors.proj_floor,
+    )
+    print(f"  Unique candidates: {len(candidates):,}")
+
+    # Candidate stats
+    cand_projs = [sum(players[i]["projected_points"] for i in c) for c in candidates]
+    cand_ceils = [sum(players[i]["ceiling"] for i in c) for c in candidates]
+    cand_sals = [sum(players[i]["salary"] for i in c) for c in candidates]
+    print(f"  Avg projection: {np.mean(cand_projs):.1f} | "
+          f"Avg ceiling: {np.mean(cand_ceils):.1f} | "
+          f"Avg salary: ${np.mean(cand_sals):,.0f}")
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 3: Generate opponent field (largest contest size, reusable)
@@ -433,13 +547,38 @@ def main():
     # ══════════════════════════════════════════════════════════════════
     # STEP 4: Pre-simulate player scores + Monte Carlo contest sim
     # ══════════════════════════════════════════════════════════════════
-    n_harvest_sims = args.sims
-    n_portfolio_sims = args.presim_factor * args.sims
+    # Sim count driven by field size (10x multiplier from player_sim.py design)
+    # Memory-aware: caps total (candidates × sims) to fit in RAM
+    #   Position matrix: int32 (4B), optimizer arrays: ~24B per element
+    #   Budget: 300GB max working set on 512GB machine
+    # ══════════════════════════════════════════════════════════════════
+    MAX_MEMORY_GB = 40  # actual measured: OOM at 80GB est. Real overhead ~2x due to
+    # positions(int32) + payouts(float64) + cut_survival(float32) + effective(float32)
+    # + improvement(float32) + score_buf + opponent arrays + Python heap + numpy temps
+    BYTES_PER_ELEMENT = 28  # total per (candidate × sim) element across optimizer arrays
+
+    max_field = max(c["field"] for c in contests)
+    field_driven_sims = max_field * PLAYER_SIM_MULTIPLIER  # 71K × 10 = 710K
+    n_portfolio_sims = max(args.presim_factor * args.sims, field_driven_sims)
+
+    # Check if we need to cap sims to fit candidates × sims in memory
+    n_cands_est = len(candidates) + 500  # +500 for harvest
+    max_elements = int(MAX_MEMORY_GB * 1024**3 / BYTES_PER_ELEMENT)
+    if n_cands_est * n_portfolio_sims > max_elements:
+        n_portfolio_sims = max_elements // n_cands_est
+        print(f"  ⚠ Memory cap: {n_cands_est:,} candidates × sims capped to "
+              f"{n_portfolio_sims:,} sims ({n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB)")
+
+    # Harvest phase: 10% of portfolio sims (enough for opponent ranking)
+    n_harvest_sims = max(args.sims, n_portfolio_sims // 10)
     n_presim = n_harvest_sims + n_portfolio_sims
 
     print(f"\n{'='*70}")
     print(f"  STEP 4: Pre-simulate {n_presim:,} player score scenarios")
-    print(f"  Phase 1 (harvest): {n_harvest_sims:,} | Phase 2 (portfolio): {n_portfolio_sims:,} ({args.presim_factor}x)")
+    print(f"  Field-driven: {max_field:,} entries × {PLAYER_SIM_MULTIPLIER}x = {field_driven_sims:,} target")
+    print(f"  Portfolio sims: {n_portfolio_sims:,} | Harvest sims: {n_harvest_sims:,}")
+    print(f"  Memory est: {n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB "
+          f"({n_cands_est:,} cands × {n_portfolio_sims:,} sims)")
     print(f"  Same-wave corr: {SAME_WAVE_CORRELATION} | Cross-wave corr: {DIFF_WAVE_CORRELATION}")
     print(f"{'='*70}")
 
@@ -552,8 +691,8 @@ def main():
         # Salary/projection check (same constraints as our candidates)
         opp_sal = sum(players[idx]["salary"] for idx in opp_lu)
         opp_proj = sum(players[idx]["projected_points"] for idx in opp_lu)
-        if (SALARY_FLOOR_CUSTOM and opp_sal < SALARY_FLOOR_CUSTOM) or \
-           (PROJ_FLOOR_CUSTOM and opp_proj < PROJ_FLOOR_CUSTOM):
+        if (opp_floors.salary_floor and opp_sal < opp_floors.salary_floor) or \
+           (opp_floors.proj_floor and opp_proj < opp_floors.proj_floor):
             continue
         harvested.append(list(opp_lu))
         cand_set.add(opp_key)
@@ -630,17 +769,57 @@ def main():
     del presim_scores
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4d: Pre-filter candidates for portfolio optimizer memory
+    # STEP 4d: Filter candidates by w* for optimizer memory budget
+    #   Target: ~200GB working set max (leaves headroom on 512GB machine)
+    #   If all candidates fit, skip filtering entirely.
     # ══════════════════════════════════════════════════════════════════
-    max_needed = sum(c["max_entries"] for c in contests)
-    TOP_CANDIDATES = max(max_needed * 10, 3000)
-    mean_positions = positions_matrix.mean(axis=1)
-    top_idx = np.argsort(mean_positions)[:TOP_CANDIDATES]
-    positions_filtered = positions_matrix[top_idx]
-    candidates_filtered = [candidates[i] for i in top_idx]
-    del positions_matrix
-    print(f"\n  Pre-filtered candidates: {n_cands:,} → {len(candidates_filtered):,} "
-          f"(top {TOP_CANDIDATES:,} by mean position for memory)")
+    MAX_WORKING_GB = 40  # optimizer needs payouts(8B) + survival(4B) + effective(4B) + improvement(4B) + scratch
+    bytes_per_element = 24  # per (candidate × sim) across all optimizer arrays (excludes positions)
+    max_candidates = int(MAX_WORKING_GB * 1024**3 / (n_portfolio_sims * bytes_per_element))
+
+    if n_cands <= max_candidates:
+        # All candidates fit — no filter needed
+        positions_filtered = positions_matrix
+        candidates_filtered = candidates
+        mem_est = n_cands * n_portfolio_sims * bytes_per_element / 1024**3
+        print(f"\n  All {n_cands:,} candidates → optimizer (est. {mem_est:.1f}GB working set)")
+    else:
+        # Filter by w* to fit memory budget
+        print(f"\n  Memory budget: {MAX_WORKING_GB}GB → max {max_candidates:,} candidates "
+              f"at {n_portfolio_sims:,} sims")
+
+        # Use primary contest payout structure for w* ranking
+        primary_contest = contests[0]
+        primary_field = primary_contest["field"]
+        primary_fee = primary_contest["fee"]
+        primary_payout_by_pos = build_payout_lookup(
+            primary_contest["profile"]["payouts"], primary_field
+        )
+        sim_field = n_opps + 1
+        pos_scale = primary_field / sim_field
+
+        # Compute w* in batches — only the w* scalar survives each batch
+        w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
+        filter_batch = 1000
+        for b_start in range(0, n_cands, filter_batch):
+            b_end = min(b_start + filter_batch, n_cands)
+            batch_pos = positions_matrix[b_start:b_end]
+            scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
+            np.clip(scaled, 1, primary_field, out=scaled)
+            batch_payouts = primary_payout_by_pos[scaled]
+            w_batch, _, _ = compute_w_star(batch_payouts, primary_fee)
+            w_star_all[b_start:b_end] = w_batch
+
+        top_idx = np.argsort(-w_star_all)[:max_candidates]
+        positions_filtered = positions_matrix[top_idx]
+        candidates_filtered = [candidates[i] for i in top_idx]
+
+        n_positive_w = int((w_star_all > 0).sum())
+        mem_est = max_candidates * n_portfolio_sims * bytes_per_element / 1024**3
+        print(f"  w* filter: {n_cands:,} → {max_candidates:,} candidates | "
+              f"+w*={n_positive_w}/{n_cands} | best={w_star_all.max():.6f} | "
+              f"est. {mem_est:.1f}GB")
+        del positions_matrix
 
     # Compute cut survival once for filtered candidates
     cut_survival = compute_cut_survival(candidates_filtered, players, n_portfolio_sims)
@@ -653,7 +832,11 @@ def main():
     print(f"{'='*70}")
 
     results = []
-    event_name = "Cognizant Classic"
+    # Derive event name from contest name (strip "PGA TOUR" prefix and prize info)
+    import re as _re_evt
+    raw_name = contests[0]["name"] if contests else "Unknown"
+    evt_match = _re_evt.match(r'PGA TOUR\s+(.*?)(?:\s*\[)', raw_name)
+    event_name = evt_match.group(1).strip() if evt_match else raw_name
     used_candidate_indices = set()  # Track lineups already assigned to prior contests
 
     for ci, contest_def in enumerate(contests):
@@ -687,6 +870,13 @@ def main():
 
         print(f"  Candidate ROI: mean={roi.mean():+.1f}% | best={roi.max():+.1f}% | "
               f"+EV={int((roi > 0).sum())}/{len(roi)}")
+
+        # w* log-utility diagnostics
+        w_star, p_cash, kelly_frac = compute_w_star(payouts, entry_fee)
+        finite_w = w_star[w_star > -np.inf]
+        if len(finite_w) > 0:
+            print(f"  w* stats: best={w_star.max():.6f} | median={np.median(finite_w):.6f} | "
+                  f"+w*={int((w_star > 0).sum())}/{len(w_star)}")
 
         # Select portfolio via optimizer (exclude lineups already in other contests)
         portfolio = optimize_portfolio(
@@ -771,7 +961,7 @@ def main():
         slug = slug_match.group(1).lower() if slug_match else cid
         if max_entries == 1:
             slug += "_se"
-        csv_filename = f"lineups_cognizant_{slug}_{len(lineups)}.csv"
+        csv_filename = f"lineups_{cid}_{len(lineups)}.csv"
         csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), csv_filename)
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
