@@ -18,6 +18,7 @@ import argparse
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import (ROSTER_SIZE, SALARY_CAP,
                      BASE_CORRELATION, WAVE_CORR_BOOST, FIT_CORR_BOOST,

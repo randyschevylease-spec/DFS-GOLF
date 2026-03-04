@@ -23,6 +23,7 @@ import json
 import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import NUM_LINEUPS, ROSTER_SIZE
 from datagolf_client import (

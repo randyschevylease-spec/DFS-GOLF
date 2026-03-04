@@ -26,6 +26,7 @@ import numpy as np
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import (ROSTER_SIZE, SALARY_CAP, SHOWDOWN_SALARY_FLOORS,
                     PLAYER_SIM_MULTIPLIER)
@@ -37,6 +38,7 @@ from field_generator import generate_field, field_to_index_lists
 from showdown_engine import simulate_contest
 from portfolio_optimizer import optimize_portfolio
 from export import export_all
+from log_utility import compute_w_star, print_w_star_summary
 
 
 def main():
@@ -172,17 +174,25 @@ def main():
     print(f"  Top candidate ROI: {roi.max():.1f}%")
     print(f"  Median candidate ROI: {np.median(roi):.1f}%")
 
+    # w* log-utility scoring
+    w_star, p_cash, kelly_frac = compute_w_star(payouts, entry_fee)
+    print_w_star_summary(w_star, p_cash, kelly_frac, roi)
+
     # ══════════════════════════════════════════════════════════════════
-    # STEP 7: Pre-filter candidates
+    # STEP 7: Pre-filter candidates (by w* growth rate)
     # ══════════════════════════════════════════════════════════════════
     TOP_CANDIDATES = max(max_entries * 10, 3000)
-    top_idx = np.argsort(-roi)[:TOP_CANDIDATES]
+    top_idx = np.argsort(-w_star)[:TOP_CANDIDATES]
     payouts_filtered = payouts[top_idx]
     candidates_filtered = [candidates[i] for i in top_idx]
     roi_filtered = roi[top_idx]
+    w_star_filtered = w_star[top_idx]
 
-    print(f"\n  Pre-filtered to top {TOP_CANDIDATES:,} candidates")
-    print(f"  ROI range: {roi_filtered[-1]:.1f}% – {roi_filtered[0]:.1f}%")
+    print(f"\n  Pre-filtered to top {TOP_CANDIDATES:,} candidates (by w*)")
+    finite_w = w_star_filtered[w_star_filtered > -np.inf]
+    if len(finite_w) > 0:
+        print(f"  w* range: {finite_w.min():.6f} – {finite_w.max():.6f}")
+    print(f"  ROI range: {roi_filtered.min():.1f}% – {roi_filtered.max():.1f}%")
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 8: Portfolio optimization (via dispatcher)

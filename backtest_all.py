@@ -22,6 +22,7 @@ from itertools import product
 from functools import lru_cache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma, empirical_sigma_from_projection

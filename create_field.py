@@ -20,6 +20,7 @@ from pathlib import Path
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
 from engine import generate_candidates, generate_field

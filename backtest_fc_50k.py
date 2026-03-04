@@ -9,6 +9,7 @@ import numpy as np
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import ROSTER_SIZE, SALARY_CAP, SALARY_FLOOR
 

@@ -20,6 +20,7 @@ import argparse
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import ROSTER_SIZE, SALARY_CAP, CVAR_LAMBDA, BASE_CORRELATION
 from datagolf_client import get_fantasy_projections, get_predictions, find_current_event
@@ -27,6 +28,7 @@ from dk_contests import fetch_contest, fetch_golf_contests
 from engine import generate_field, generate_candidates, select_portfolio, _get_sigma, _rank_candidates_vectorized
 import re
 import gspread
+from log_utility import compute_w_star
 from google.oauth2.service_account import Credentials
 
 SHEETS_SCOPES = [
@@ -619,12 +621,18 @@ def main():
     players.sort(key=lambda p: p["projected_points"], reverse=True)
 
     # Synthesize ownership if needed
+    # Linear weighting with 40% cap — realistic DFS golf ownership
     has_ownership = any(p["proj_ownership"] > 0 for p in players)
     if not has_ownership:
         print(f"  Ownership not live — synthesizing from projections")
         projs = np.array([p["projected_points"] for p in players])
-        exp_projs = np.exp((projs - projs.mean()) / max(projs.std(), 1))
-        synth_own = exp_projs / exp_projs.sum() * 100 * ROSTER_SIZE
+        total_own = 100 * ROSTER_SIZE
+        proj_min = projs.min()
+        spread = max(projs.max() - proj_min, 1.0)
+        linear_w = np.maximum((projs - proj_min) / spread, 0.05)
+        raw_own = linear_w / linear_w.sum() * total_own
+        np.minimum(raw_own, 40.0, out=raw_own)
+        synth_own = raw_own / raw_own.sum() * total_own
         for i, p in enumerate(players):
             p["proj_ownership"] = round(float(synth_own[i]), 2)
 
@@ -656,6 +664,18 @@ def main():
             else:
                 p["p_make_cut"] = 0
         print(f"  Matched make_cut for {mc_matched}/{len(players)} players")
+
+        # Projection-based fallback for unmatched players
+        unmatched = [p for p in players if p.get("p_make_cut", 0) <= 0]
+        if unmatched:
+            projs = np.array([p["projected_points"] for p in players])
+            median_proj = np.median(projs)
+            k_logistic = 0.139  # ln(4)/10 — +10 pts → ~80%, -10 pts → ~20%
+            for p in unmatched:
+                z = k_logistic * (p["projected_points"] - median_proj)
+                p["p_make_cut"] = 1.0 / (1.0 + np.exp(-z))
+            print(f"  Fallback make_cut for {len(unmatched)}/{len(players)} players "
+                  f"(logistic, median_proj={median_proj:.1f})")
 
         from engine import compute_mixture_params
         mixture_params_data = compute_mixture_params(players)
@@ -786,6 +806,9 @@ def main():
         np.clip(scaled, 1, field_size, out=scaled)
         sel_payouts = cc["payout_by_pos"][scaled]
 
+        # w* log-utility diagnostics for selected lineups
+        sel_w_star, sel_p_cash, sel_kelly = compute_w_star(sel_payouts, entry_fee)
+
         # Build lineups
         lineups = []
         for sel_idx in selected:
@@ -828,6 +851,10 @@ def main():
               f"Field: {field_size:,} | Cost: ${total_cost:,.0f}")
         print(f"  ROI: {contest_result['expected_roi']:+.1f}% | "
               f"Cash: {contest_result['cash_rate']:.1f}%")
+        finite_w = sel_w_star[sel_w_star > -np.inf]
+        if len(finite_w) > 0:
+            print(f"  w* stats: best={sel_w_star.max():.6f} | median={np.median(finite_w):.6f} | "
+                  f"+w*={int((sel_w_star > 0).sum())}/{len(sel_w_star)}")
         print(f"  Top exposure: {top_exp_str}")
 
         # Save CSV

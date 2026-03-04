@@ -26,6 +26,7 @@ import numpy as np
 from scipy.stats import norm as sp_norm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
 
 from config import SAME_WAVE_CORRELATION, DIFF_WAVE_CORRELATION
 from datagolf_client import get_predictions
