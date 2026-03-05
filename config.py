@@ -28,7 +28,7 @@ PLAYER_SIM_MULTIPLIER = 10
 # ── Correlation Structure (additive layers) ──────────────────────────────────
 BASE_CORRELATION = 0.05        # all golfers share course/weather baseline
 WAVE_CORR_BOOST = 0.20        # same AM/PM wave → shared wind/pins/greens
-FIT_CORR_BOOST = 0.10         # same course-fit profile (dist/acc) → co-move
+FIT_CORR_BOOST = 0.20         # same course-fit profile (dist/acc) → co-move
 # Legacy aliases used by other modules
 SAME_WAVE_CORRELATION = BASE_CORRELATION + WAVE_CORR_BOOST
 DIFF_WAVE_CORRELATION = BASE_CORRELATION

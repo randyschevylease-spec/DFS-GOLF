@@ -46,13 +46,24 @@ CONTEST_IDS = [
     "188508570",   # $60K Dogleg SE ($33, 1 entry)
 ]
 
-CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (6).csv"
+CSV_PATH = "/Users/rhbot/Downloads/draftkings_main_projections (7).csv"
 DK_ENTRIES_PATH = "/Users/rhbot/Downloads/DKEntries (6).csv"
-CEILING_FILTER = 110
+CEILING_FILTER = 0
 CEILING_WEIGHT = 0.0
 CANDIDATE_POOL = 20000
-W_STAR_CAP = 1000       # w* pre-filter: keep top N candidates after Phase 1
+W_STAR_CAP = 2000       # w* pre-filter: keep top N candidates after Phase 1
 HARVEST_COUNT = 500      # opponent lineups harvested into candidate pool
+FIELD_SIZE = 50000       # total opponent field size per draw
+N_FIELD_DRAWS = 3        # independent field draws for w* averaging
+
+# Contest-tier archetype weights: >40K entrants get sharper field model
+LARGE_FIELD_ARCHETYPE_WEIGHTS = {
+    "sharp": 0.35,
+    "chalk": 0.30,
+    "content": 0.25,
+    "random": 0.10,
+}
+LARGE_FIELD_THRESHOLD = 40000  # contests with field > this use LARGE_FIELD weights
 
 
 def parse_players(csv_path):
@@ -109,13 +120,17 @@ def parse_players(csv_path):
                     mc_raw = float(row["make_cut"])
                     mc = mc_raw / 100.0 if mc_raw > 1.0 else mc_raw
 
-                # Decomp edge from CSV (DRIVE DIST / DRIVE ACC columns)
+                # Decomp edge from CSV (driving_dist_adj / driving_acc_adj columns)
                 drive_dist_adj = 0.0
                 drive_acc_adj = 0.0
-                if "DRIVE DIST" in cols and row.get("DRIVE DIST", "").strip():
-                    drive_dist_adj = float(row["DRIVE DIST"])
-                if "DRIVE ACC" in cols and row.get("DRIVE ACC", "").strip():
-                    drive_acc_adj = float(row["DRIVE ACC"])
+                for col in ("driving_dist_adj", "DRIVE DIST"):
+                    if col in cols and row.get(col, "").strip():
+                        drive_dist_adj = float(row[col])
+                        break
+                for col in ("driving_acc_adj", "DRIVE ACC"):
+                    if col in cols and row.get(col, "").strip():
+                        drive_acc_adj = float(row[col])
+                        break
 
                 # Scoring/finish breakdown for bimodal
                 scoring_pts = 0.0
@@ -403,102 +418,91 @@ def main():
           f"Avg salary: ${np.mean(cand_sals):,.0f}")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 3: Generate opponent field (largest contest size, reusable)
+    # STEP 3: Generate opponent fields (N_FIELD_DRAWS independent draws)
     # ══════════════════════════════════════════════════════════════════
     max_field = max(c["field"] for c in contests)
+    # Pick archetype weights: large-field weights for >40K entrant contests
+    arch_weights = LARGE_FIELD_ARCHETYPE_WEIGHTS if max_field > LARGE_FIELD_THRESHOLD else DEFAULT_ARCHETYPE_WEIGHTS
     print(f"\n{'='*70}")
-    print(f"  STEP 3: Generate {max_field:,} archetype-based opponent lineups")
+    print(f"  STEP 3: Generate {N_FIELD_DRAWS}x {FIELD_SIZE:,} opponent fields "
+          f"({N_FIELD_DRAWS * FIELD_SIZE:,} total)")
+    arch_str = " | ".join(f"{k} {v*100:.0f}%" for k, v in arch_weights.items())
+    print(f"  Archetype weights: {arch_str}")
     print(f"{'='*70}")
 
-    generated_field = generate_field_archetypes(
-        players, max_field,
-        archetype_weights=DEFAULT_ARCHETYPE_WEIGHTS,
-        ownership_tolerance=0.03,
-        max_iterations=10,
-    )
-    opponents = field_to_index_lists(generated_field)
-    print(f"  Generated {len(opponents):,} opponent lineups")
-    for arch, cnt in sorted(generated_field.archetype_distribution.items(), key=lambda x: -x[1]):
-        print(f"    {arch:<12} {cnt:>7,} ({cnt/len(opponents)*100:.0f}%)")
+    field_draws = []  # list of (opponents, generated_field) per draw
+    for draw_i in range(N_FIELD_DRAWS):
+        draw_seed = 1000 + draw_i * 7  # deterministic but different per draw
+        print(f"\n  ── Field draw {draw_i + 1}/{N_FIELD_DRAWS} (seed={draw_seed}) ──")
+        gf = generate_field_archetypes(
+            players, FIELD_SIZE,
+            archetype_weights=arch_weights,
+            ownership_tolerance=0.03,
+            max_iterations=10,
+            seed=draw_seed,
+        )
+        opps = field_to_index_lists(gf)
+        field_draws.append((opps, gf))
+        print(f"  Draw {draw_i + 1}: {len(opps):,} lineups")
+        for arch, cnt in sorted(gf.archetype_distribution.items(), key=lambda x: -x[1]):
+            print(f"    {arch:<12} {cnt:>7,} ({cnt/len(opps)*100:.0f}%)")
 
-    # Dump opponent field to CSV
-    field_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "opponent_field.csv")
-    with open(field_csv, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Lineup#", "G1", "G2", "G3", "G4", "G5", "G6", "Salary", "Proj"])
-        for li, lu in enumerate(opponents, 1):
-            names = [players[idx]["name"] for idx in lu]
-            sal = sum(players[idx]["salary"] for idx in lu)
-            proj = sum(players[idx]["projected_points"] for idx in lu)
-            writer.writerow([li] + names + [sal, round(proj, 1)])
-    print(f"  Field CSV: {field_csv}")
-
-    # Ownership calibration
+    # Ownership calibration (average across draws)
     n = len(players)
-    counts = [0] * n
-    for lu in opponents:
-        for idx in lu:
-            counts[idx] += 1
-    print(f"\n  Ownership calibration (top 10):")
+    avg_counts = np.zeros(n, dtype=np.float64)
+    for opps, _ in field_draws:
+        for lu in opps:
+            for idx in lu:
+                avg_counts[idx] += 1
+    avg_counts /= N_FIELD_DRAWS
+    total_opps_per_draw = len(field_draws[0][0])
+    print(f"\n  Ownership calibration (averaged across {N_FIELD_DRAWS} draws, top 10):")
     print(f"  {'Player':<28} {'Target':>8} {'Sim':>8}")
     print(f"  {'-'*28} {'-'*8} {'-'*8}")
     top_own = sorted(range(n), key=lambda i: players[i]["proj_ownership"], reverse=True)[:10]
     for i in top_own:
-        sim_own = counts[i] / len(opponents) * 100
+        sim_own = avg_counts[i] / total_opps_per_draw * 100
         print(f"  {players[i]['name']:<28} {players[i]['proj_ownership']:>7.1f}% {sim_own:>7.1f}%")
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4: Pre-simulate player scores + Monte Carlo contest sim
+    # STEP 4: Multi-draw Phase 1 — score candidates vs N independent fields,
+    #         average w* across draws, filter to top W_STAR_CAP per contest
     # ══════════════════════════════════════════════════════════════════
-    # Sim count driven by field size (10x multiplier from player_sim.py design)
-    # Memory-aware: caps total (candidates × sims) to fit in RAM
-    #   Position matrix: int32 (4B), optimizer arrays: ~24B per element
-    #   Budget: 300GB max working set on 512GB machine
-    # ══════════════════════════════════════════════════════════════════
-    MAX_MEMORY_GB = 40  # actual measured: OOM at 80GB est. Real overhead ~2x due to
-    # positions(int32) + payouts(float64) + cut_survival(float32) + effective(float32)
-    # + improvement(float32) + score_buf + opponent arrays + Python heap + numpy temps
-    BYTES_PER_ELEMENT = 28  # total per (candidate × sim) element across optimizer arrays
-
-    max_field = max(c["field"] for c in contests)
-    field_driven_sims = max_field * PLAYER_SIM_MULTIPLIER  # 71K × 10 = 710K
-    n_portfolio_sims = max(args.presim_factor * args.sims, field_driven_sims)
-
-    # Check if we need to cap sims to fit per-contest position matrices in memory
-    # New: 5 contest matrices × ~1.5K candidates each (after w* filter + harvest)
-    n_cands_est = len(contests) * (W_STAR_CAP + HARVEST_COUNT)
-    max_elements = int(MAX_MEMORY_GB * 1024**3 / BYTES_PER_ELEMENT)
-    if n_cands_est * n_portfolio_sims > max_elements:
-        n_portfolio_sims = max_elements // n_cands_est
-        print(f"  ⚠ Memory cap: {n_cands_est:,} elements × sims capped to "
-              f"{n_portfolio_sims:,} sims ({n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB)")
-
-    # Harvest phase: 10% of portfolio sims (enough for opponent ranking)
-    n_harvest_sims = max(args.sims, n_portfolio_sims // 10)
-    n_presim = n_harvest_sims + n_portfolio_sims
-
-    print(f"\n{'='*70}")
-    print(f"  STEP 4: Pre-simulate {n_presim:,} player score scenarios")
-    print(f"  Field-driven: {max_field:,} entries × {PLAYER_SIM_MULTIPLIER}x = {field_driven_sims:,} target")
-    print(f"  Portfolio sims: {n_portfolio_sims:,} | Harvest sims: {n_harvest_sims:,}")
-    print(f"  Memory est: {n_cands_est * n_portfolio_sims * BYTES_PER_ELEMENT / 1024**3:.0f}GB "
-          f"({len(contests)} contests × ~{W_STAR_CAP + HARVEST_COUNT:,} cands × {n_portfolio_sims:,} sims)")
-    print(f"  Correlation: base={BASE_CORRELATION} + wave={WAVE_CORR_BOOST} + fit={FIT_CORR_BOOST}")
-    print(f"{'='*70}")
+    MAX_MEMORY_GB = 40
+    BYTES_PER_ELEMENT = 28
 
     n_players = len(players)
     n_cands = len(candidates)
-    n_opps = len(opponents)
+    n_opps_per_draw = FIELD_SIZE
 
-    # Build SEPARATE candidate and opponent lineup matrices
+    # Sims per draw: split total budget across N_FIELD_DRAWS
+    max_field = max(c["field"] for c in contests)
+    field_driven_sims = max_field * PLAYER_SIM_MULTIPLIER
+    total_portfolio_sims = max(args.presim_factor * args.sims, field_driven_sims)
+
+    # Memory cap for Phase 2 (post-filter)
+    n_cands_est = len(contests) * (W_STAR_CAP + HARVEST_COUNT)
+    max_elements = int(MAX_MEMORY_GB * 1024**3 / BYTES_PER_ELEMENT)
+    if n_cands_est * total_portfolio_sims > max_elements:
+        total_portfolio_sims = max_elements // n_cands_est
+        print(f"  ⚠ Memory cap: sims capped to {total_portfolio_sims:,}")
+
+    # Phase 1 sims per draw — split evenly
+    sims_per_draw = max(args.sims, total_portfolio_sims // (N_FIELD_DRAWS * 2))
+    n_presim = sims_per_draw * N_FIELD_DRAWS + total_portfolio_sims
+
+    print(f"\n{'='*70}")
+    print(f"  STEP 4: Multi-draw Phase 1 ({N_FIELD_DRAWS} draws × {sims_per_draw:,} sims)")
+    print(f"  Candidates: {n_cands:,} | Opponents per draw: {n_opps_per_draw:,}")
+    print(f"  Phase 2 sims: {total_portfolio_sims:,}")
+    print(f"  Correlation: base={BASE_CORRELATION} + wave={WAVE_CORR_BOOST} + fit={FIT_CORR_BOOST}")
+    print(f"{'='*70}")
+
+    # Build candidate matrix
     cand_matrix = np.zeros((n_cands, n_players), dtype=np.float32)
     for i, lu in enumerate(candidates):
         for idx in lu:
             cand_matrix[i, idx] = 1.0
-    opp_matrix = np.zeros((n_opps, n_players), dtype=np.float32)
-    for i, lu in enumerate(opponents):
-        for idx in lu:
-            opp_matrix[i, idx] = 1.0
 
     means = np.array([p["projected_points"] for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
@@ -507,7 +511,6 @@ def main():
     waves_arr = np.array(waves)
     same_wave = (waves_arr[:, None] == waves_arr[None, :]).astype(np.float64)
 
-    # Course-fit groups from decomp (driving_dist / driving_acc / baseline)
     if edge_sources is not None:
         fit_labels = edge_sources["primary"]
         fit_ids = np.array([hash(l) for l in fit_labels])
@@ -555,107 +558,137 @@ def main():
     presim_elapsed = time.time() - presim_start
     print(f"  Pre-sim complete in {presim_elapsed:.1f}s ({n_presim/presim_elapsed:,.0f} scenarios/sec)")
 
-    # ── Phase 1: Harvest simulation (first n_harvest_sims scenarios) ──
-    positions_matrix = np.empty((n_cands, n_harvest_sims), dtype=np.int32)
-    opp_score_sum = np.zeros(n_opps, dtype=np.float64)
-    print(f"\n  Phase 1: Simulating {n_harvest_sims:,} contests for opponent harvesting...")
-    print(f"  {n_cands:,} candidates vs {n_opps:,} opponents (opponent-only ranking)")
+    # ── Phase 1: Run each field draw sequentially (memory-safe) ──
+    # Accumulate per-contest w* arrays across draws for averaging
+    w_star_accum = {}  # ci -> list of w* arrays (one per draw)
+    for ci in range(len(contests)):
+        w_star_accum[ci] = []
 
-    sim_start = time.time()
-    batch_size = 500
+    # Also accumulate opponent scores across all draws for harvesting
+    all_draw_opponents = []  # list of (opponents, opp_mean_scores) per draw
     cand_matrix_f32 = cand_matrix.astype(np.float32)
-    opp_matrix_f32 = opp_matrix.astype(np.float32)
-
-    for batch_start in range(0, n_harvest_sims, batch_size):
-        bs = min(batch_size, n_harvest_sims - batch_start)
-        scores = presim_scores[batch_start:batch_start + bs]
-
-        cand_scores = scores @ cand_matrix_f32.T
-        opp_scores = scores @ opp_matrix_f32.T
-
-        opp_score_sum += opp_scores.sum(axis=0).astype(np.float64)
-
-        # Vectorized ranking: all sims × all candidates in one searchsorted call
-        positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
-        positions_matrix[:, batch_start:batch_start + bs] = positions.T
-
-    sim_elapsed = time.time() - sim_start
-    print(f"  Phase 1 complete in {sim_elapsed:.1f}s")
-    print(f"  Position matrix: {positions_matrix.shape} (ranks among {n_opps + 1} participants)")
-
-    # ── Per-contest w* pre-filter: each contest gets its own candidate pool ──
-    sim_field_p1 = n_opps + 1
-    per_contest_candidates = {}  # ci -> list of lineup index-lists
+    batch_size = 500
     filter_batch = 1000
-    all_original_candidates = candidates  # preserve original list for indexing
+    all_original_candidates = candidates
 
-    print(f"\n  Per-contest w* pre-filter (Phase 1):")
+    for draw_i in range(N_FIELD_DRAWS):
+        opponents, _ = field_draws[draw_i]
+        n_opps = len(opponents)
+        sim_offset = draw_i * sims_per_draw  # each draw uses different score scenarios
+
+        print(f"\n  ── Phase 1 draw {draw_i + 1}/{N_FIELD_DRAWS}: "
+              f"{n_cands:,} cands vs {n_opps:,} opps × {sims_per_draw:,} sims ──")
+
+        # Build opponent matrix for this draw
+        opp_matrix = np.zeros((n_opps, n_players), dtype=np.float32)
+        for i, lu in enumerate(opponents):
+            for idx in lu:
+                opp_matrix[i, idx] = 1.0
+
+        # Simulate and rank
+        positions_matrix = np.empty((n_cands, sims_per_draw), dtype=np.int32)
+        opp_score_sum = np.zeros(n_opps, dtype=np.float64)
+        sim_start = time.time()
+
+        for b_start in range(0, sims_per_draw, batch_size):
+            bs = min(batch_size, sims_per_draw - b_start)
+            scores = presim_scores[sim_offset + b_start:sim_offset + b_start + bs]
+            cand_scores = scores @ cand_matrix_f32.T
+            opp_scores = scores @ opp_matrix.T
+            opp_score_sum += opp_scores.sum(axis=0).astype(np.float64)
+            positions = _rank_candidates_vectorized(opp_scores, cand_scores, n_opps, n_opps + 1)
+            positions_matrix[:, b_start:b_start + bs] = positions.T
+
+        sim_elapsed = time.time() - sim_start
+        print(f"    Sim complete in {sim_elapsed:.1f}s")
+
+        # Compute per-contest w* for this draw
+        sim_field_p1 = n_opps + 1
+        for ci, contest in enumerate(contests):
+            c_field = contest["field"]
+            c_fee = contest["fee"]
+            c_payout_by_pos = build_payout_lookup(contest["profile"]["payouts"], c_field)
+            pos_scale = c_field / sim_field_p1
+
+            w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
+            for fb_start in range(0, n_cands, filter_batch):
+                fb_end = min(fb_start + filter_batch, n_cands)
+                batch_pos = positions_matrix[fb_start:fb_end]
+                scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
+                np.clip(scaled, 1, c_field, out=scaled)
+                batch_payouts = c_payout_by_pos[scaled]
+                w_batch, _, _ = compute_w_star(batch_payouts, c_fee)
+                w_star_all[fb_start:fb_end] = w_batch
+
+            w_star_accum[ci].append(w_star_all)
+
+        # Save opponent mean scores for harvesting
+        opp_mean_scores = opp_score_sum / sims_per_draw
+        all_draw_opponents.append((opponents, opp_mean_scores))
+
+        del positions_matrix, opp_matrix  # free per-draw memory
+
+    # ── Average w* across draws and filter ──
+    print(f"\n  ── Averaging w* across {N_FIELD_DRAWS} draws ──")
+    per_contest_candidates = {}
+    union_indices = set()
+
     print(f"  {'Contest':<42} {'Field':>7} {'Fee':>5} {'+w*':>6} {'Kept':>6}")
     print(f"  {'-'*42} {'-'*7} {'-'*5} {'-'*6} {'-'*6}")
 
-    union_indices = set()  # track union of all kept indices for overlap stats
-
     for ci, contest in enumerate(contests):
-        c_field = contest["field"]
-        c_fee = contest["fee"]
-        c_payout_by_pos = build_payout_lookup(contest["profile"]["payouts"], c_field)
-        pos_scale = c_field / sim_field_p1
+        # Stack w* arrays and average (treat -inf as -inf in mean)
+        w_arrays = np.stack(w_star_accum[ci])  # (N_FIELD_DRAWS, n_cands)
+        # For averaging: replace -inf with NaN, use nanmean, then back to -inf
+        w_finite = np.where(w_arrays > -1e10, w_arrays, np.nan)
+        avg_w_star = np.nanmean(w_finite, axis=0)
+        avg_w_star = np.where(np.isnan(avg_w_star), -np.inf, avg_w_star)
 
-        # Compute w* for all candidates using THIS contest's payouts/fee
-        w_star_all = np.full(n_cands, -np.inf, dtype=np.float64)
-        for b_start in range(0, n_cands, filter_batch):
-            b_end = min(b_start + filter_batch, n_cands)
-            batch_pos = positions_matrix[b_start:b_end]
-            scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
-            np.clip(scaled, 1, c_field, out=scaled)
-            batch_payouts = c_payout_by_pos[scaled]
-            w_batch, _, _ = compute_w_star(batch_payouts, c_fee)
-            w_star_all[b_start:b_end] = w_batch
-
-        n_positive_w = int((w_star_all > 0).sum())
+        n_positive_w = int((avg_w_star > 0).sum())
         actual_cap = min(W_STAR_CAP, n_cands)
-        top_idx = np.argsort(-w_star_all)[:actual_cap]
+        top_idx = np.argsort(-avg_w_star)[:actual_cap]
         per_contest_candidates[ci] = [all_original_candidates[i] for i in top_idx]
         union_indices.update(top_idx.tolist())
 
         cname_short = contest["name"][:42]
-        print(f"  {cname_short:<42} {c_field:>7,} ${c_fee:>4} {n_positive_w:>6,} {actual_cap:>6,}")
+        print(f"  {cname_short:<42} {contest['field']:>7,} ${contest['fee']:>4} "
+              f"{n_positive_w:>6,} {actual_cap:>6,}")
 
-    # Overlap summary
     total_kept = sum(len(v) for v in per_contest_candidates.values())
     print(f"\n  Union of all per-contest candidates: {len(union_indices):,} unique "
           f"(of {n_cands:,} original)")
-    print(f"  Total across contests: {total_kept:,} "
-          f"(avg overlap: {total_kept / len(union_indices):.1f}x)" if len(union_indices) > 0 else "")
+    if len(union_indices) > 0:
+        print(f"  Total across contests: {total_kept:,} "
+              f"(avg overlap: {total_kept / len(union_indices):.1f}x)")
 
-    del positions_matrix  # free Phase 1 position matrix
+    del w_star_accum  # free w* accumulator
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 4b: Harvest top opponent lineups into all per-contest pools
+    # STEP 4b: Harvest top opponent lineups from ALL draws
     # ══════════════════════════════════════════════════════════════════
-    opp_mean_scores = opp_score_sum / n_harvest_sims
-
     print(f"\n{'='*70}")
-    print(f"  STEP 4b: Harvest top field lineups into candidate pools")
+    print(f"  STEP 4b: Harvest top field lineups from {N_FIELD_DRAWS} draws")
     print(f"{'='*70}")
-    print(f"  Opponent mean score range: {opp_mean_scores.min():.1f} – {opp_mean_scores.max():.1f}")
 
-    # Dedup against the union of all per-contest candidate sets
+    # Dedup against candidate sets
     cand_set = set()
     for ci in per_contest_candidates:
         for lu in per_contest_candidates[ci]:
             cand_set.add(tuple(sorted(lu)))
 
-    # Rank opponents by mean simulated score, pick top N unique ones
-    top_opp_idx = np.argsort(-opp_mean_scores)
+    # Merge all draw opponents, rank by mean score, harvest best unique ones
+    all_opp_entries = []  # (mean_score, lineup, draw_idx)
+    for draw_i, (opps, opp_means) in enumerate(all_draw_opponents):
+        for oi, lu in enumerate(opps):
+            all_opp_entries.append((float(opp_means[oi]), lu, draw_i))
+    all_opp_entries.sort(key=lambda x: -x[0])
+
     harvested = []
     harvested_details = []
-    for oi in top_opp_idx:
-        opp_lu = opponents[oi]
+    for score, opp_lu, draw_i in all_opp_entries:
         opp_key = tuple(sorted(opp_lu))
         if opp_key in cand_set:
             continue
-        # Salary/projection check (same constraints as our candidates)
         opp_sal = sum(players[idx]["salary"] for idx in opp_lu)
         opp_proj = sum(players[idx]["projected_points"] for idx in opp_lu)
         if (opp_floors.salary_floor and opp_sal < opp_floors.salary_floor) or \
@@ -664,22 +697,20 @@ def main():
         harvested.append(list(opp_lu))
         cand_set.add(opp_key)
         harvested_details.append({
-            "score": float(opp_mean_scores[oi]),
-            "salary": opp_sal,
-            "proj": opp_proj,
+            "score": score, "salary": opp_sal, "proj": opp_proj,
             "names": [players[idx]["name"] for idx in opp_lu],
+            "draw": draw_i,
         })
         if len(harvested) >= HARVEST_COUNT:
             break
 
-    print(f"  Harvested {len(harvested)} unique field lineups (from {n_opps:,} opponents)")
+    total_opps = sum(len(opps) for opps, _ in all_draw_opponents)
+    print(f"  Harvested {len(harvested)} unique field lineups (from {total_opps:,} "
+          f"opponents across {N_FIELD_DRAWS} draws)")
     if harvested_details:
         print(f"  Top harvested: score={harvested_details[0]['score']:.1f} "
               f"proj={harvested_details[0]['proj']:.1f} "
               f"sal=${harvested_details[0]['salary']:,}")
-        print(f"  Bottom harvested: score={harvested_details[-1]['score']:.1f} "
-              f"proj={harvested_details[-1]['proj']:.1f} "
-              f"sal=${harvested_details[-1]['salary']:,}")
         for h in harvested_details[:5]:
             names = ", ".join(h["names"][:6])
             print(f"    {h['score']:.1f} pts | ${h['salary']:,} | {h['proj']:.1f} proj | {names}")
@@ -691,14 +722,32 @@ def main():
         print(f"  Contest {ci}: {n_orig:,} w*-filtered + {len(harvested)} harvested = "
               f"{len(per_contest_candidates[ci]):,} total")
 
+    del all_draw_opponents  # free opponent data
+
     # ══════════════════════════════════════════════════════════════════
     # STEP 4c: Per-contest position simulation (Phase 2)
+    #   Merge all field draws into combined opponent pool.
     #   Subsample opponents per contest so positions are direct — no scaling.
-    #   Each contest has its own candidate matrix (from per-contest w* filter).
     # ══════════════════════════════════════════════════════════════════
+    n_portfolio_sims = total_portfolio_sims
+    phase2_offset = sims_per_draw * N_FIELD_DRAWS  # use different scenarios than Phase 1
+
+    # Merge all field draw opponents into one combined pool
+    combined_opponents = []
+    for opps, _ in field_draws:
+        combined_opponents.extend(opps)
+    n_opps = len(combined_opponents)
     print(f"\n{'='*70}")
     print(f"  STEP 4c: Per-contest position simulation ({n_portfolio_sims:,} sims)")
+    print(f"  Combined opponent pool: {n_opps:,} (from {N_FIELD_DRAWS} draws)")
     print(f"{'='*70}")
+
+    # Build combined opponent matrix
+    opp_matrix = np.zeros((n_opps, n_players), dtype=np.float32)
+    for i, lu in enumerate(combined_opponents):
+        for idx in lu:
+            opp_matrix[i, idx] = 1.0
+    opp_matrix_f32 = opp_matrix
 
     # Build per-contest candidate matrices
     per_contest_cand_matrix = {}
@@ -724,7 +773,7 @@ def main():
         print(f"  Contest {ci}: {contests[ci]['name'][:40]:<40} field={contest['field']:>7,} → "
               f"opp subset: {sub_size}")
 
-    # Allocate per-contest position matrices (potentially different n_cands per contest)
+    # Allocate per-contest position matrices
     positions_per_contest = {}
     total_pos_mem = 0
     for ci in range(len(contests)):
@@ -739,23 +788,22 @@ def main():
     print(f"  Simulating {n_portfolio_sims:,} sims across {len(contests)} contests...")
 
     sim_start = time.time()
-    phase2_offset = n_harvest_sims  # use different scenarios than Phase 1
 
     for batch_start in range(0, n_portfolio_sims, batch_size):
         bs = min(batch_size, n_portfolio_sims - batch_start)
         scores = presim_scores[phase2_offset + batch_start:phase2_offset + batch_start + bs]
 
-        opp_scores_full = scores @ opp_matrix_f32.T       # (bs, n_opps) — one multiply
+        opp_scores_full = scores @ opp_matrix_f32.T
 
         for ci in range(len(contests)):
-            cand_scores = scores @ per_contest_cand_matrix[ci].T  # (bs, n_ci_cands)
+            cand_scores = scores @ per_contest_cand_matrix[ci].T
 
             subset = opp_subsets[ci]
             if subset is None:
                 opp_sub = opp_scores_full
                 n_opp_sub = n_opps
             else:
-                opp_sub = opp_scores_full[:, subset]      # column slice, nearly free
+                opp_sub = opp_scores_full[:, subset]
                 n_opp_sub = len(subset)
 
             positions = _rank_candidates_vectorized(opp_sub, cand_scores, n_opp_sub, n_opp_sub + 1)
@@ -775,7 +823,6 @@ def main():
         print(f"    Contest {ci}: positions ({n_ci:,} × {n_portfolio_sims:,}) "
               f"(ranks among {n_opp_sub + 1})")
 
-    # Free presim scores and per-contest cand matrices — no longer needed
     del presim_scores
     del per_contest_cand_matrix
 
@@ -833,13 +880,47 @@ def main():
             print(f"  w* stats: best={w_star.max():.6f} | median={np.median(finite_w):.6f} | "
                   f"+w*={int((w_star > 0).sum())}/{len(w_star)}")
 
+        # Ownership-adjusted w*: discount by expected duplicate count
+        # adj_w* = raw_w* - ln(1 + expected_dupes) × penalty
+        DUPE_PENALTY_WEIGHT = 0.05
+        expected_dupes_arr = np.zeros(len(ci_candidates), dtype=np.float64)
+        for ci_i, lu in enumerate(ci_candidates):
+            p_exact = 1.0
+            for pidx in lu:
+                p_exact *= max(players[pidx]["proj_ownership"], 0.01) / 100.0
+            expected_dupes_arr[ci_i] = p_exact * field_size
+        adj_w_star = w_star - np.log1p(expected_dupes_arr) * DUPE_PENALTY_WEIGHT
+        n_adj = int((adj_w_star < w_star).sum())
+        print(f"  Ownership-adjusted w*: {n_adj}/{len(w_star)} penalized "
+              f"(max expected dupes: {expected_dupes_arr.max():.1f})")
+
         # Compute cut_survival for THIS contest's candidate pool (freed after each iteration)
         cut_survival = compute_cut_survival(ci_candidates, players, n_portfolio_sims)
 
-        # Select portfolio via optimizer (no cross-contest exclusion —
-        # a lineup elite in multiple contests should be used in all of them)
+        # Duplicate budget: track high-dupe lineups in greedy selector
+        # Max 20% of portfolio with >10 expected dupes, max 5% with >25 expected dupes
+        DUPE_BUDGET_HIGH = 0.20   # max 20% of portfolio with >10 expected dupes
+        DUPE_BUDGET_VERY_HIGH = 0.05  # max 5% with >25 expected dupes
+        dupe_high_mask = expected_dupes_arr > 10
+        dupe_very_high_mask = expected_dupes_arr > 25
+        n_dupe_high = int(dupe_high_mask.sum())
+        n_dupe_very_high = int(dupe_very_high_mask.sum())
+        max_high_dupe = max(1, int(max_entries * DUPE_BUDGET_HIGH))
+        max_very_high_dupe = max(1, int(max_entries * DUPE_BUDGET_VERY_HIGH))
+        if n_dupe_high > 0:
+            print(f"  Dupe budget: {n_dupe_high} candidates >10 dupes "
+                  f"(cap: {max_high_dupe}/{max_entries}), "
+                  f"{n_dupe_very_high} >25 dupes "
+                  f"(cap: {max_very_high_dupe}/{max_entries})")
+
+        # Apply dupe penalty to payouts: scale down high-dupe lineups slightly
+        # This biases the greedy selector away from heavily duplicated lineups
+        dupe_scale = 1.0 / (1.0 + expected_dupes_arr * 0.01)
+        payouts_adj = payouts * dupe_scale[:, None]
+
+        # Select portfolio via optimizer
         portfolio = optimize_portfolio(
-            payouts, entry_fee, max_entries, ci_candidates,
+            payouts_adj, entry_fee, max_entries, ci_candidates,
             n_players=n_players,
             method="greedy",
             diversity_weight=0.4,
@@ -879,6 +960,11 @@ def main():
             lu_ceil = sum(p["ceiling"] for p in lineup)
             owns = [max(p["proj_ownership"], 0.01) for p in lineup]
             lu_geomean_own = float(np.exp(np.mean(np.log(owns))))
+            # Expected duplicates: P(exact match) × field_size
+            p_exact = 1.0
+            for p in lineup:
+                p_exact *= max(p["proj_ownership"], 0.01) / 100.0
+            expected_dupes = p_exact * field_size
             lineup_stats.append({
                 "roi": lu_roi,
                 "cash_rate": lu_cash,
@@ -886,6 +972,7 @@ def main():
                 "projection": lu_proj,
                 "ceiling": lu_ceil,
                 "geomean_own": lu_geomean_own,
+                "expected_dupes": expected_dupes,
                 "players": [p["name"] for p in lineup],
             })
 
@@ -990,6 +1077,108 @@ def main():
     print(f"  {'-'*28} {'-'*6} {'-'*7}")
     for name, cnt in sorted(global_exposure.items(), key=lambda x: -x[1])[:20]:
         print(f"  {name:<28} {cnt:>6} {cnt/total_lineups*100:>6.1f}%")
+
+    # ══════════════════════════════════════════════════════════════════
+    # STEP 7: Portfolio Diversity & Duplication Diagnostics
+    # ══════════════════════════════════════════════════════════════════
+    print(f"\n{'='*70}")
+    print(f"  PORTFOLIO DIVERSITY & DUPLICATION DIAGNOSTICS")
+    print(f"{'='*70}")
+
+    for ri, r in enumerate(results):
+        cname = r["name"][:40]
+        lineups = r["lineups"]
+        stats = r.get("lineup_stats", [])
+        n_lu = len(lineups)
+        if n_lu < 2:
+            continue
+        field_size = r["profile"]["max_entries"] if "profile" in r else 10000
+
+        print(f"\n  ── {cname} ({n_lu} lineups) ──")
+
+        # 1. Exact duplicate check
+        lu_tuples = [tuple(sorted(p["name"] for p in lu)) for lu in lineups]
+        n_unique = len(set(lu_tuples))
+        n_exact_dupes = n_lu - n_unique
+        print(f"  Exact duplicates: {n_exact_dupes} ({n_unique}/{n_lu} unique)")
+
+        # 2. Pairwise overlap matrix
+        from itertools import combinations as _comb
+        overlap_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+        for i, j in _comb(range(n_lu), 2):
+            shared = len(set(lu_tuples[i]) & set(lu_tuples[j]))
+            overlap_counts[shared] = overlap_counts.get(shared, 0) + 1
+        n_pairs = n_lu * (n_lu - 1) // 2
+        near_dupes = overlap_counts.get(5, 0) + overlap_counts.get(6, 0)
+        mean_overlap = sum(k * v for k, v in overlap_counts.items()) / max(n_pairs, 1)
+        print(f"  Pairwise overlap ({n_pairs:,} pairs): mean={mean_overlap:.2f} players")
+        for k in range(7):
+            if overlap_counts[k] > 0:
+                pct = overlap_counts[k] / n_pairs * 100
+                flag = " ⚠" if k >= 5 else ""
+                print(f"    {k} shared: {overlap_counts[k]:>6,} ({pct:.1f}%){flag}")
+        if near_dupes > 0:
+            print(f"  ⚠ {near_dupes} near-duplicate pairs (5-6 shared players)")
+
+        # 3. Expected duplicates distribution
+        if stats:
+            dupes = [s.get("expected_dupes", 0) for s in stats]
+            high_dupe = sum(1 for d in dupes if d > 10)
+            very_high = sum(1 for d in dupes if d > 25)
+            print(f"  Expected dupes: mean={np.mean(dupes):.2f} | max={max(dupes):.1f}")
+            print(f"    >10 expected dupes: {high_dupe}/{n_lu} "
+                  f"({high_dupe/n_lu*100:.0f}%, budget: 20%)")
+            print(f"    >25 expected dupes: {very_high}/{n_lu} "
+                  f"({very_high/n_lu*100:.0f}%, budget: 5%)")
+
+        # 4. Outcome correlation & effective portfolio size
+        # Use sim payouts to compute correlation matrix
+        ci_idx = ri  # contest index matches result index
+        if ci_idx in positions_per_contest:
+            ci_cands = per_contest_candidates[ci_idx]
+            ci_selected = r.get("_selected_indices", None)
+            # We need the selected indices within the per-contest pool
+            # Reconstruct from lineup identity matching
+            sel_lu_keys = [tuple(sorted(p["name"] for p in lu)) for lu in lineups]
+            ci_lu_keys = [tuple(sorted(players[idx]["name"] for idx in lu)) for lu in ci_cands]
+            key_to_idx = {}
+            for ki, k in enumerate(ci_lu_keys):
+                if k not in key_to_idx:
+                    key_to_idx[k] = ki
+            sel_idx_in_pool = [key_to_idx.get(k, -1) for k in sel_lu_keys]
+            valid_sel = [i for i in sel_idx_in_pool if i >= 0]
+
+            if len(valid_sel) >= 2:
+                # Get payout rows for selected lineups
+                subset = opp_subsets[ci_idx]
+                sim_field = (n_opps + 1) if subset is None else (len(subset) + 1)
+                payout_by_pos = build_payout_lookup(
+                    r["profile"]["payouts"], sim_field)
+                sel_positions = positions_per_contest[ci_idx][valid_sel]
+                sel_payouts_mat = payout_by_pos[sel_positions]  # (n_sel, n_sims)
+
+                # Pairwise Pearson correlation
+                corr = np.corrcoef(sel_payouts_mat)
+                # Extract upper triangle (exclude diagonal)
+                triu_idx = np.triu_indices(len(valid_sel), k=1)
+                pairwise_r = corr[triu_idx]
+                n_high_corr = int((pairwise_r > 0.80).sum())
+
+                print(f"  Outcome correlation ({len(valid_sel)} lineups):")
+                print(f"    Mean r={np.mean(pairwise_r):.3f} | "
+                      f"Max r={np.max(pairwise_r):.3f} | "
+                      f"Pairs r>0.80: {n_high_corr}")
+
+                # Effective portfolio size via eigenvalue decomposition
+                eigvals = np.linalg.eigvalsh(corr)
+                eigvals = np.maximum(eigvals, 0)  # numerical safety
+                eigvals_sorted = np.sort(eigvals)[::-1]
+                cum_var = np.cumsum(eigvals_sorted) / eigvals_sorted.sum()
+                eff_size_90 = int(np.searchsorted(cum_var, 0.90)) + 1
+                eff_size_95 = int(np.searchsorted(cum_var, 0.95)) + 1
+                print(f"    Effective portfolio size: "
+                      f"{eff_size_90} (90% var) / {eff_size_95} (95% var) "
+                      f"of {len(valid_sel)} lineups")
 
     # ── Export to DKEntries CSV for direct upload ──
     if results and DK_ENTRIES_PATH:
