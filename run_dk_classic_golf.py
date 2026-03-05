@@ -6,7 +6,7 @@ mean projection, ownership, wave, and tee-time data. Uses three-layer correlatio
 (base + wave + course-fit) and ceiling-weighted objectives.
 
 Usage:
-    python3 -u run_dk_classic_golf.py
+    python3 -u run_dk_classic_golf.py --csv projections.csv --entries DKEntries.csv
     python3 -u run_dk_classic_golf.py --sheets          # Also push to Google Sheets
     python3 -u run_dk_classic_golf.py --sims 5000        # Fewer sims for speed
 """
@@ -178,6 +178,7 @@ def main():
     parser.add_argument("--candidates", type=int, default=CANDIDATE_POOL, help="Candidate pool size")
     parser.add_argument("--sheets", action="store_true", help="Export to Google Sheets")
     parser.add_argument("--csv", type=str, default=CSV_PATH, help="Path to projections CSV")
+    parser.add_argument("--entries", type=str, default=DK_ENTRIES_PATH, help="Path to DKEntries CSV")
     args = parser.parse_args()
 
     start_time = time.time()
@@ -1181,13 +1182,13 @@ def main():
                       f"of {len(valid_sel)} lineups")
 
     # ── Export to DKEntries CSV for direct upload ──
-    if results and DK_ENTRIES_PATH:
+    if results and args.entries:
         print(f"\n{'='*70}")
         print(f"  EXPORTING TO DK ENTRIES CSV")
         print(f"{'='*70}")
         try:
             # Read original DKEntries template
-            with open(DK_ENTRIES_PATH, "r") as f:
+            with open(args.entries, "r") as f:
                 dk_reader = csv.reader(f)
                 dk_header = next(dk_reader)
                 dk_rows = list(dk_reader)
@@ -1222,7 +1223,7 @@ def main():
                         assigned += 1
 
             # Write updated DKEntries
-            dk_output = DK_ENTRIES_PATH.replace(".csv", "_optimized.csv")
+            dk_output = args.entries.replace(".csv", "_optimized.csv")
             with open(dk_output, "w", newline="") as f:
                 dk_writer = csv.writer(f)
                 dk_writer.writerow(dk_header)
