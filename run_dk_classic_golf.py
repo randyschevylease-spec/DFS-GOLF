@@ -950,6 +950,10 @@ def main():
         dupe_scale = 1.0 / (1.0 + expected_dupes_arr * 0.01)
         payouts_adj = payouts * dupe_scale[:, None]
 
+        # Top-1% payout threshold for per-lineup finish rate
+        top1_pos = max(1, int(field_size * 0.01))
+        top1_payout_threshold = float(payout_by_pos[min(top1_pos, len(payout_by_pos) - 1)])
+
         # Select portfolio via optimizer
         portfolio = optimize_portfolio(
             payouts_adj, entry_fee, max_entries, ci_candidates,
@@ -962,6 +966,7 @@ def main():
             cut_survival=cut_survival,
             edge_sources=edge_sources,
             edge_diversity_weight=5.0,
+            top1_payout_threshold=top1_payout_threshold,
         )
 
         selected = portfolio.selected_indices
@@ -999,6 +1004,7 @@ def main():
             expected_dupes = p_exact * field_size
             lu_win_prob = 1.0 - np.prod([1.0 - p.get("p_win", 0) for p in lineup])
             lu_top10_prob = 1.0 - np.prod([1.0 - p.get("p_top10", 0) for p in lineup])
+            lu_top1_rate = portfolio.per_lineup_top1_rate[li] if portfolio.per_lineup_top1_rate else 0.0
             lineup_stats.append({
                 "roi": lu_roi,
                 "cash_rate": lu_cash,
@@ -1009,6 +1015,7 @@ def main():
                 "expected_dupes": expected_dupes,
                 "win_prob": lu_win_prob,
                 "top10_prob": lu_top10_prob,
+                "top1_rate": lu_top1_rate,
                 "players": [p["name"] for p in lineup],
             })
 
@@ -1046,13 +1053,14 @@ def main():
         csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), csv_filename)
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["G"] * ROSTER_SIZE + ["Salary", "Projection", "Ceiling", "ROI%", "Cash%", "GeoOwn%", "Win%", "Top10%"])
+            writer.writerow(["G"] * ROSTER_SIZE + ["Salary", "Projection", "Ceiling", "ROI%", "Cash%", "GeoOwn%", "Win%", "Top10%", "Top1%"])
             for lineup, stats in zip(lineups, lineup_stats):
                 writer.writerow(
                     [p.get("name_id", p["name"]) for p in lineup] +
                     [stats["salary"], round(stats["projection"], 1), round(stats["ceiling"], 1),
                      round(stats["roi"], 1), round(stats["cash_rate"], 1), round(stats["geomean_own"], 2),
-                     round(stats["win_prob"] * 100, 2), round(stats["top10_prob"] * 100, 2)]
+                     round(stats["win_prob"] * 100, 2), round(stats["top10_prob"] * 100, 2),
+                     round(stats["top1_rate"], 2)]
                 )
         print(f"  CSV: {csv_filename}")
 
