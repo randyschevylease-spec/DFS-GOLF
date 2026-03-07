@@ -35,10 +35,10 @@ from players import parse_projections, validate_players, derive_std_devs, comput
 from player_sim import generate_player_sims, build_lineup_matrix
 from candidate_generator import generate_candidates
 from field_generator import generate_field, field_to_index_lists
-from showdown_engine import simulate_contest
+from showdown_engine import simulate_contest, resimulate_filtered
 from portfolio_optimizer import optimize_portfolio
 from export import export_all
-from log_utility import compute_w_star, print_w_star_summary
+from log_utility import print_w_star_summary
 
 
 def main():
@@ -162,37 +162,45 @@ def main():
     print(f"{'='*70}")
 
     t_sim = time.time()
-    payouts, roi = simulate_contest(
+    sim_result = simulate_contest(
         player_sim, candidates, opponents, players,
         payout_table, entry_fee,
     )
     sim_elapsed = time.time() - t_sim
     print(f"  Simulation complete in {sim_elapsed:.1f}s")
 
-    n_positive = (roi > 0).sum()
+    n_positive = (sim_result.roi > 0).sum()
     print(f"  Positive ROI candidates: {n_positive:,}/{len(candidates):,}")
-    print(f"  Top candidate ROI: {roi.max():.1f}%")
-    print(f"  Median candidate ROI: {np.median(roi):.1f}%")
+    print(f"  Top candidate ROI: {sim_result.roi.max():.1f}%")
+    print(f"  Median candidate ROI: {np.median(sim_result.roi):.1f}%")
 
-    # w* log-utility scoring
-    w_star, p_cash, kelly_frac = compute_w_star(payouts, entry_fee)
-    print_w_star_summary(w_star, p_cash, kelly_frac, roi)
+    # w* summary (computed inline during streaming sim, k=1 Kelly)
+    print_w_star_summary(sim_result.w_star, np.ones_like(sim_result.w_star), sim_result.roi)
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 7: Pre-filter candidates (by w* growth rate)
+    # STEP 7: Pre-filter candidates + resimulate filtered subset
     # ══════════════════════════════════════════════════════════════════
     TOP_CANDIDATES = max(max_entries * 10, 3000)
-    top_idx = np.argsort(-w_star)[:TOP_CANDIDATES]
-    payouts_filtered = payouts[top_idx]
+    top_idx = np.argsort(-sim_result.w_star)[:TOP_CANDIDATES]
     candidates_filtered = [candidates[i] for i in top_idx]
-    roi_filtered = roi[top_idx]
-    w_star_filtered = w_star[top_idx]
+    roi_filtered = sim_result.roi[top_idx]
+    w_star_filtered = sim_result.w_star[top_idx]
 
     print(f"\n  Pre-filtered to top {TOP_CANDIDATES:,} candidates (by w*)")
     finite_w = w_star_filtered[w_star_filtered > -np.inf]
     if len(finite_w) > 0:
         print(f"  w* range: {finite_w.min():.6f} – {finite_w.max():.6f}")
     print(f"  ROI range: {roi_filtered.min():.1f}% – {roi_filtered.max():.1f}%")
+
+    # Materialize payouts only for filtered candidates (float32, ~1.3 GB vs 24 GB)
+    print(f"  Re-simulating {len(candidates_filtered):,} filtered candidates...")
+    t_resim = time.time()
+    payouts_filtered = resimulate_filtered(
+        player_sim, candidates_filtered, opponents, players,
+        payout_table, entry_fee,
+    )
+    print(f"  Resim complete in {time.time() - t_resim:.1f}s "
+          f"({payouts_filtered.nbytes / 1024**3:.1f} GB)")
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 8: Portfolio optimization (via dispatcher)
