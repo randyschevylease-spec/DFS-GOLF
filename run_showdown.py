@@ -24,6 +24,7 @@ import os
 import time
 import numpy as np
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dfs-core'))
@@ -112,39 +113,43 @@ def main():
     waves = [p["wave"] for p in players]
 
     # ══════════════════════════════════════════════════════════════════
-    # STEP 3: Generate opponent field
+    # STEPS 3+4: Generate opponent field + candidates (parallel)
     # ══════════════════════════════════════════════════════════════════
     n_opponents = field_size - max_entries
     print(f"\n{'='*70}")
-    print(f"  STEP 3: Generate opponent field ({n_opponents:,} lineups)")
+    print(f"  STEPS 3+4: Field ({n_opponents:,} opponents) + "
+          f"Candidates ({args.pool_size:,} MIP solves) [parallel]")
     print(f"{'='*70}")
 
-    t_field = time.time()
-    field = generate_field(
-        players, n_opponents,
-        seed=args.seed,
-        min_salary_map=SHOWDOWN_SALARY_FLOORS,
-    )
-    opponents = field_to_index_lists(field)
-    print(f"  Field generated in {time.time()-t_field:.1f}s")
+    t_parallel = time.time()
 
-    # ══════════════════════════════════════════════════════════════════
-    # STEP 4: Generate candidate lineups
-    # ══════════════════════════════════════════════════════════════════
-    print(f"\n{'='*70}")
-    print(f"  STEP 4: Generate candidates ({args.pool_size:,} MIP solves)")
-    print(f"{'='*70}")
+    def _gen_field():
+        field = generate_field(
+            players, n_opponents,
+            seed=args.seed,
+            min_salary_map=SHOWDOWN_SALARY_FLOORS,
+        )
+        return field_to_index_lists(field)
 
-    t_cand = time.time()
-    candidates = generate_candidates(
-        players,
-        pool_size=args.pool_size,
-        candidate_exposure_cap=1.0,
-        ceiling_weight=0.0,
-        min_proj_pct=0.0,
-        seed=args.seed,
-    )
-    print(f"  Candidates: {len(candidates):,} unique in {time.time()-t_cand:.1f}s")
+    def _gen_candidates():
+        return generate_candidates(
+            players,
+            pool_size=args.pool_size,
+            candidate_exposure_cap=1.0,
+            ceiling_weight=0.0,
+            min_proj_pct=0.0,
+            seed=args.seed,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        field_future = executor.submit(_gen_field)
+        cand_future = executor.submit(_gen_candidates)
+        opponents = field_future.result()
+        candidates = cand_future.result()
+
+    print(f"  Field: {len(opponents):,} opponents | "
+          f"Candidates: {len(candidates):,} unique | "
+          f"Parallel time: {time.time()-t_parallel:.1f}s")
 
     # ══════════════════════════════════════════════════════════════════
     # STEP 5: PLAYER SIMULATION — shared score matrix
