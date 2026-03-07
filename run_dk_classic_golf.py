@@ -918,9 +918,17 @@ def main():
         expected_dupes_arr = np.zeros(len(ci_candidates), dtype=np.float64)
         for ci_i, lu in enumerate(ci_candidates):
             p_exact = 1.0
+            owns = []
             for pidx in lu:
-                p_exact *= max(players[pidx]["proj_ownership"], 0.01) / 100.0
-            expected_dupes_arr[ci_i] = p_exact * field_size
+                own = max(players[pidx]["proj_ownership"], 0.01) / 100.0
+                p_exact *= own
+                owns.append(own)
+            raw_dupes = p_exact * field_size
+            # Chalk correlation multiplier: correlated chalk builds duplicate
+            # more than independence predicts, scaling with field size
+            geomean_own = np.exp(np.mean(np.log(owns))) * 100.0
+            chalk_bias = 1.0 + (geomean_own / 100.0) * np.log10(field_size) * 0.5
+            expected_dupes_arr[ci_i] = raw_dupes * chalk_bias
         adj_w_star = w_star - np.log1p(expected_dupes_arr) * DUPE_PENALTY_WEIGHT
         n_adj = int((adj_w_star < w_star).sum())
         print(f"  Ownership-adjusted w*: {n_adj}/{len(w_star)} penalized "
