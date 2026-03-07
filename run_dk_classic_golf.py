@@ -28,7 +28,8 @@ from datagolf_client import get_predictions
 from dk_contests import fetch_contest
 from engine import (generate_candidates, simulate_contest,
                     _get_sigma, compute_mixture_params,
-                    transform_mixture_scores, _rank_candidates_vectorized)
+                    transform_mixture_scores, _rank_candidates_vectorized,
+                    DK_FINISH_BONUS)
 from field_generator import (generate_field as generate_field_archetypes,
                              field_to_index_lists, DEFAULT_ARCHETYPE_WEIGHTS)
 from portfolio_optimizer import (optimize_portfolio, compute_cut_survival)
@@ -134,8 +135,11 @@ def parse_players(csv_path):
 
                 # Scoring/finish breakdown for bimodal
                 scoring_pts = 0.0
+                finish_pts = 0.0
                 if "scoring_points" in cols and row.get("scoring_points", "").strip():
                     scoring_pts = float(row["scoring_points"])
+                if "finish_points" in cols and row.get("finish_points", "").strip():
+                    finish_pts = float(row["finish_points"])
 
                 # Determine primary edge from decomp adjustments
                 if drive_dist_adj > 0 and drive_dist_adj >= drive_acc_adj:
@@ -159,6 +163,7 @@ def parse_players(csv_path):
                     "proj_ownership": own,
                     "value": value,
                     "scoring_points": scoring_pts,
+                    "finish_points": finish_pts,
                     "primary_edge": primary_edge,
                 }
                 if mc > 0:
@@ -505,7 +510,9 @@ def main():
         for idx in lu:
             cand_matrix[i, idx] = 1.0
 
-    means = np.array([p["projected_points"] for p in players], dtype=np.float64)
+    # Scoring-only means — finish bonus assigned per-sim via zero-sum ranking
+    means = np.array([p.get("scoring_points", 0) or p["projected_points"]
+                      for p in players], dtype=np.float64)
     sigmas = np.array([_get_sigma(p) for p in players], dtype=np.float64)
 
     # Three-layer correlation: base + wave + course-fit
@@ -549,12 +556,26 @@ def main():
         Z = rng.standard_normal((bs, n_players))
         X = Z @ L.T
         if use_mix:
-            s = transform_mixture_scores(
+            s, cut_mask = transform_mixture_scores(
                 X, sigmas, mix_p_miss, mix_mu_miss, mix_sigma_miss,
-                mix_mu_make, mix_sigma_make, mix_flag)
+                mix_mu_make, mix_sigma_make, mix_flag, return_cut_mask=True)
         else:
             s = means[None, :] + X
             np.maximum(s, 0.0, out=s)
+            cut_mask = np.ones((bs, n_players), dtype=bool)
+
+        # Zero-sum finish bonus: rank made-cut players, assign DK finish pts
+        ranking_scores = s.copy()
+        ranking_scores[~cut_mask] = -np.inf
+        order = np.argsort(-ranking_scores, axis=1)
+        ranks = np.empty_like(order)
+        rows = np.arange(bs)[:, None]
+        ranks[rows, order] = np.arange(1, n_players + 1)[None, :]
+        ranks_clipped = np.minimum(ranks, len(DK_FINISH_BONUS) - 1)
+        bonus = DK_FINISH_BONUS[ranks_clipped]
+        bonus[~cut_mask] = 0.0
+        s += bonus
+
         presim_scores[batch_start:batch_start + bs] = s.astype(np.float32)
     presim_elapsed = time.time() - presim_start
     print(f"  Pre-sim complete in {presim_elapsed:.1f}s ({n_presim/presim_elapsed:,.0f} scenarios/sec)")
