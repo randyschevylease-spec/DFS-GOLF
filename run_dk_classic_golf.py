@@ -141,6 +141,12 @@ def parse_players(csv_path):
                 if "finish_points" in cols and row.get("finish_points", "").strip():
                     finish_pts = float(row["finish_points"])
 
+                # Finish probabilities (from DataGolf CSV)
+                p_win = float(row["win"]) if "win" in cols and row.get("win", "").strip() else 0.0
+                p_top5 = float(row["top_5"]) if "top_5" in cols and row.get("top_5", "").strip() else 0.0
+                p_top10 = float(row["top_10"]) if "top_10" in cols and row.get("top_10", "").strip() else 0.0
+                p_top20 = float(row["top_20"]) if "top_20" in cols and row.get("top_20", "").strip() else 0.0
+
                 # Determine primary edge from decomp adjustments
                 if drive_dist_adj > 0 and drive_dist_adj >= drive_acc_adj:
                     primary_edge = "driving_dist"
@@ -165,6 +171,10 @@ def parse_players(csv_path):
                     "scoring_points": scoring_pts,
                     "finish_points": finish_pts,
                     "primary_edge": primary_edge,
+                    "p_win": p_win,
+                    "p_top5": p_top5,
+                    "p_top10": p_top10,
+                    "p_top20": p_top20,
                 }
                 if mc > 0:
                     player["p_make_cut"] = mc
@@ -639,7 +649,7 @@ def main():
                 scaled = np.rint(batch_pos * pos_scale).astype(np.int32)
                 np.clip(scaled, 1, c_field, out=scaled)
                 batch_payouts = c_payout_by_pos[scaled]
-                w_batch, _, _ = compute_w_star(batch_payouts, c_fee)
+                w_batch, _ = compute_w_star(batch_payouts, c_fee)
                 w_star_all[fb_start:fb_end] = w_batch
 
             w_star_accum[ci].append(w_star_all)
@@ -896,8 +906,8 @@ def main():
               f"+EV={int((roi > 0).sum())}/{len(roi)}")
 
         # w* log-utility diagnostics
-        w_star, p_cash, kelly_frac = compute_w_star(payouts, entry_fee)
-        finite_w = w_star[w_star > -np.inf]
+        w_star, kelly_frac = compute_w_star(payouts, entry_fee)
+        finite_w = w_star[w_star > 0]
         if len(finite_w) > 0:
             print(f"  w* stats: best={w_star.max():.6f} | median={np.median(finite_w):.6f} | "
                   f"+w*={int((w_star > 0).sum())}/{len(w_star)}")
@@ -987,6 +997,8 @@ def main():
             for p in lineup:
                 p_exact *= max(p["proj_ownership"], 0.01) / 100.0
             expected_dupes = p_exact * field_size
+            lu_win_prob = 1.0 - np.prod([1.0 - p.get("p_win", 0) for p in lineup])
+            lu_top10_prob = 1.0 - np.prod([1.0 - p.get("p_top10", 0) for p in lineup])
             lineup_stats.append({
                 "roi": lu_roi,
                 "cash_rate": lu_cash,
@@ -995,6 +1007,8 @@ def main():
                 "ceiling": lu_ceil,
                 "geomean_own": lu_geomean_own,
                 "expected_dupes": expected_dupes,
+                "win_prob": lu_win_prob,
+                "top10_prob": lu_top10_prob,
                 "players": [p["name"] for p in lineup],
             })
 
@@ -1032,12 +1046,13 @@ def main():
         csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), csv_filename)
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["G"] * ROSTER_SIZE + ["Salary", "Projection", "Ceiling", "ROI%", "Cash%", "GeoOwn%"])
+            writer.writerow(["G"] * ROSTER_SIZE + ["Salary", "Projection", "Ceiling", "ROI%", "Cash%", "GeoOwn%", "Win%", "Top10%"])
             for lineup, stats in zip(lineups, lineup_stats):
                 writer.writerow(
                     [p.get("name_id", p["name"]) for p in lineup] +
                     [stats["salary"], round(stats["projection"], 1), round(stats["ceiling"], 1),
-                     round(stats["roi"], 1), round(stats["cash_rate"], 1), round(stats["geomean_own"], 2)]
+                     round(stats["roi"], 1), round(stats["cash_rate"], 1), round(stats["geomean_own"], 2),
+                     round(stats["win_prob"] * 100, 2), round(stats["top10_prob"] * 100, 2)]
                 )
         print(f"  CSV: {csv_filename}")
 
