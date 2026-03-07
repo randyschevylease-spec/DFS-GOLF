@@ -351,6 +351,9 @@ def _select_portfolio(lineup_scores, candidates, n_select, max_appearances, n_pl
 
     Returns list of indices into candidates/lineup_scores.
     """
+    MIN_MARGINAL_EV = 0.001   # Lineup must improve portfolio by ≥0.1% avg to be added
+    TRIM_TOP_PCT = 0.01       # Exclude top 1% of improvement values (outlier guard)
+
     n_candidates, n_sims = lineup_scores.shape
 
     # Build player-to-candidates index for fast exposure enforcement
@@ -365,6 +368,7 @@ def _select_portfolio(lineup_scores, candidates, n_select, max_appearances, n_pl
     selected = []
 
     eval_chunk = 2000  # Process candidates in chunks to limit memory
+    trim_count = max(1, int(n_sims * TRIM_TOP_PCT))
 
     for r in range(n_select):
         alive_indices = np.where(alive)[0]
@@ -382,12 +386,20 @@ def _select_portfolio(lineup_scores, candidates, n_select, max_appearances, n_pl
 
             chunk_scores = lineup_scores[chunk_indices]  # (chunk_len, n_sims)
             improvement = np.maximum(chunk_scores - running_max[np.newaxis, :], 0.0)
-            marginal_values = improvement.mean(axis=1)
+            sorted_imp = np.sort(improvement, axis=1)
+            trimmed_imp = sorted_imp[:, :-trim_count]
+            marginal_values = trimmed_imp.mean(axis=1)
 
             chunk_best_pos = np.argmax(marginal_values)
             if marginal_values[chunk_best_pos] > best_marginal:
                 best_marginal = marginal_values[chunk_best_pos]
                 best_global_idx = chunk_indices[chunk_best_pos]
+
+        # EV floor: stop if best candidate doesn't meaningfully improve portfolio
+        if best_marginal < MIN_MARGINAL_EV:
+            print(f"  Stopping at lineup {r + 1}/{n_select}: "
+                  f"marginal EV {best_marginal:.6f} below floor {MIN_MARGINAL_EV}")
+            break
 
         # Select this candidate
         selected.append(best_global_idx)
