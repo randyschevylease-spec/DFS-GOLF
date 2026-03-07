@@ -289,6 +289,28 @@ def _generate_candidate_pool(players, pool_size=10000, noise_scale=0.15):
                 if selected is not None:
                     candidate_set.add(selected)
 
+    # Phase 3: Ownership-adjusted generation — penalize chalk to surface
+    # contrarian candidates the raw-projection phases may underweight.
+    # Quadratic penalty: penalty = scalar × (ownership/100)²
+    # A 10% owned player loses ~0.5%, a 30% player ~4.5%, a 50% player ~12.5%.
+    # Players with missing/zero ownership are assumed 15% owned.
+    ownership_penalty_scalar = 0.5
+    default_ownership = 15.0
+    own_pcts = np.array([p.get("proj_ownership", 0) or 0 for p in players],
+                        dtype=float)
+    own_pcts = np.where(own_pcts > 0, own_pcts, default_ownership)
+    own_fracs = own_pcts / 100.0
+    own_penalty = ownership_penalty_scalar * own_fracs ** 2
+    adjusted_obj = base_obj * (1.0 - own_penalty)
+
+    ownership_candidates = max(500, pool_size // 5)
+    for _ in range(ownership_candidates):
+        noise = np.exp(rng.normal(0.0, noise_scale, size=n))
+        noisy_obj = adjusted_obj * noise
+        selected = _solve_lineup_core(players, noisy_obj)
+        if selected is not None:
+            candidate_set.add(selected)
+
     return list(candidate_set)
 
 
