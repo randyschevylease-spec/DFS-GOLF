@@ -96,10 +96,12 @@ def main():
     field_size = contest["entries"]
     max_entries = min(args.entries, contest.get("max_entries_per_user", args.entries))
     payout_table = contest["payouts"]
+    payout_skew = contest["first_place_prize"] / entry_fee if entry_fee > 0 else 0
 
     print(f"  Contest: {contest['name']}")
     print(f"  Entry fee: ${entry_fee} | Field: {field_size:,} | Max entries: {max_entries}")
-    print(f"  Prize pool: ${contest['prize_pool']:,} | 1st: ${contest['first_place_prize']:,}")
+    print(f"  Prize pool: ${contest['prize_pool']:,} | 1st: ${contest['first_place_prize']:,} "
+          f"| Skew: {payout_skew:.0f}x")
 
     derive_std_devs(players)
     compute_ownership(players)
@@ -221,6 +223,7 @@ def main():
         method=args.method,
         diversity_weight=args.diversity,
         waves=waves,
+        payout_skew=payout_skew,
     )
     port_elapsed = time.time() - t_port
     print(f"  Portfolio optimization: {port_elapsed:.1f}s")
