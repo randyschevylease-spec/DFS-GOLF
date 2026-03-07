@@ -209,3 +209,79 @@ def compute_ownership(players):
 
     print(f"  Ownership computed: {ownership.min():.1f}% – {ownership.max():.1f}% "
           f"(total {ownership.sum():.0f}%)")
+
+
+def enrich_from_sg(players, sg_csv_path):
+    """Enrich player std_dev and ownership from live strokes-gained CSV.
+
+    Must be called AFTER derive_std_devs() and compute_ownership().
+
+    Ownership boost (scaled to field position):
+        mean_own = mean(proj_ownership)
+        boost = sg_total * 0.5 * (proj_ownership / mean_own)
+        Renormalize to preserve ROSTER_SIZE * 100 total.
+
+    Std dev adjustment (driving/putting divergence):
+        std_dev *= (1 + abs(sg_ott - sg_putt) / projected_points * 0.1)
+
+    Args:
+        players: list of player dicts (already have std_dev and proj_ownership)
+        sg_csv_path: path to SG CSV with player_name, sg_total, sg_ott, sg_putt
+    """
+    # Load SG data keyed by "Last, First" name
+    sg_lookup = {}
+    with open(sg_csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("player_name", "").strip()
+            if not name:
+                continue
+            try:
+                sg_lookup[name] = {
+                    "sg_total": float(row.get("sg_total", 0)),
+                    "sg_ott": float(row.get("sg_ott", 0)),
+                    "sg_putt": float(row.get("sg_putt", 0)),
+                }
+            except (ValueError, TypeError):
+                continue
+
+    # Also build reverse lookup: "First Last" → SG data (fallback for dk_name match)
+    reverse_lookup = {}
+    for name_lf, sg in sg_lookup.items():
+        parts = name_lf.split(", ", 1)
+        if len(parts) == 2:
+            reverse_lookup[f"{parts[1]} {parts[0]}"] = sg
+
+    # Match players
+    matched = 0
+    mean_own = np.mean([p["proj_ownership"] for p in players])
+
+    for p in players:
+        sg = sg_lookup.get(p.get("datagolf_name", ""))
+        if sg is None:
+            sg = reverse_lookup.get(p["name"])
+        if sg is None:
+            continue
+
+        matched += 1
+
+        # Std dev: widen for players with driving/putting divergence
+        divergence = abs(sg["sg_ott"] - sg["sg_putt"])
+        p["std_dev"] *= (1 + divergence / p["projected_points"] * 0.1)
+
+        # Ownership: scaled boost by sg_total
+        boost = sg["sg_total"] * 0.5 * (p["proj_ownership"] / mean_own)
+        p["proj_ownership"] += boost
+
+    # Renormalize ownership to preserve ROSTER_SIZE * 100 total
+    total_target = ROSTER_SIZE * 100
+    current_total = sum(p["proj_ownership"] for p in players)
+    if current_total > 0:
+        scale = total_target / current_total
+        for p in players:
+            p["proj_ownership"] *= scale
+
+    owns = [p["proj_ownership"] for p in players]
+    print(f"  SG enrichment: {matched}/{len(players)} matched from {len(sg_lookup)} SG rows")
+    print(f"  Ownership after SG: {min(owns):.1f}% – {max(owns):.1f}% "
+          f"(total {sum(owns):.0f}%)")

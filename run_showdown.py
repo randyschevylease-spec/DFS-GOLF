@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from config import (ROSTER_SIZE, SALARY_CAP, SHOWDOWN_SALARY_FLOORS,
                     PLAYER_SIM_MULTIPLIER)
 from dk_contests import fetch_contest
-from players import parse_projections, validate_players, derive_std_devs, compute_ownership
+from players import parse_projections, validate_players, derive_std_devs, compute_ownership, enrich_from_sg
 from player_sim import generate_player_sims, build_lineup_matrix
 from candidate_generator import generate_candidates
 from field_generator import generate_field, field_to_index_lists
@@ -57,6 +57,8 @@ def main():
                         help=f"Player sim multiplier (default: {PLAYER_SIM_MULTIPLIER}x field)")
     parser.add_argument("--max-sims", type=int, default=1_500_000,
                         help="Hard cap on simulations (default: 1,500,000)")
+    parser.add_argument("--sg-csv", type=str, default=None,
+                        help="Live strokes-gained CSV for ownership/std_dev enrichment")
     args = parser.parse_args()
 
     t_start = time.time()
@@ -101,6 +103,9 @@ def main():
 
     derive_std_devs(players)
     compute_ownership(players)
+
+    if args.sg_csv:
+        enrich_from_sg(players, args.sg_csv)
 
     waves = [p["wave"] for p in players]
 
