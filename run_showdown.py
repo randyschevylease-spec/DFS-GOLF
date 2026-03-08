@@ -251,6 +251,15 @@ def main():
     print(f"  Investment: ${portfolio_cost:.0f}")
     print(f"  Cash rate: {(portfolio_max > 0).mean()*100:.1f}%")
 
+    # Per-lineup metrics (individual lineup performance, not portfolio-level)
+    per_lu_mean_payout = sel_payouts.mean(axis=1)           # (n_selected,)
+    per_lu_roi = (per_lu_mean_payout - entry_fee) / entry_fee * 100
+    per_lu_cash = (sel_payouts > 0).mean(axis=1) * 100      # (n_selected,)
+    print(f"  Per-lineup avg ROI: {per_lu_roi.mean():+.1f}% "
+          f"(range: {per_lu_roi.min():+.1f}% to {per_lu_roi.max():+.1f}%)")
+    print(f"  Per-lineup avg cash rate: {per_lu_cash.mean():.1f}% "
+          f"(range: {per_lu_cash.min():.1f}% to {per_lu_cash.max():.1f}%)")
+
     # Exposure
     player_counts = Counter()
     for si in sel:
