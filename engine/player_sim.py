@@ -19,6 +19,8 @@ import math
 import os
 import random
 
+import numpy as np
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SG_STDS_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "player_sg_stds_2024.csv")
 HOLE_PROFILES_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "tpc_sawgrass_hole_profiles.csv")
@@ -67,6 +69,7 @@ def load_hole_profiles():
                 "par_rate": float(row["par_rate"]),
                 "bogey_rate": float(row["bogey_rate"]),
                 "double_rate": float(row["double_rate"]),
+                "scoring_std": float(row.get("scoring_std_across_years", 0.07)),
             })
     return holes
 
@@ -112,29 +115,31 @@ def draw_sg(profile, rng):
     return sg
 
 
-def adjust_hole_probs(hole, sg, course_offset=0.0):
+def adjust_hole_probs(hole, sg, course_offset=0.0, hole_noise=0.0):
     """
-    Adjust base hole probabilities based on player's drawn SG and course difficulty.
+    Adjust base hole probabilities based on player's drawn SG, course difficulty,
+    and per-hole volatility noise.
 
     Args:
         hole: base hole profile from course data
         sg: dict of drawn SG components for this round
         course_offset: per-hole difficulty shift derived from course_avg_score.
-            Negative = easier (more birdies), positive = harder (more bogeys).
-            Computed as (course_avg_score - 72.0) / 18 per hole.
+        hole_noise: per-hole difficulty noise for this iteration (same for all players).
+            Positive = hole plays harder, negative = easier.
 
-    Adjustment logic:
-      - sg_app & sg_putt boost/reduce birdie rate on par 4s and 3s
-      - sg_ott & sg_app boost eagle rate on par 5s
-      - Worse SG increases bogey/double rates
-      - course_offset shifts birdie down and bogey up (or vice versa)
-      - All rates re-normalized to sum to 1.0
-
-    The adjustment is proportional: each +1.0 sg_total shifts birdie
-    probability by ~4% (from empirical birdie slope of 0.397/18 holes).
+    Improvements over base model:
+      1. sg_arg reduces doubles on high-double-rate holes (>4%)
+      2. Par 3s use sg_app + sg_putt only (sg_ott excluded)
+      3. hole_noise adds correlated per-hole volatility across field
     """
-    sg_total = sg["sg_total"]
     par = hole["hole_par"]
+
+    # Improvement 2: Par-3 specific SG
+    # On par 3s, sg_ott is irrelevant (135-226 yd) — use sg_app + sg_putt only
+    if par == 3:
+        sg_effective = sg["sg_app"] + sg["sg_putt"]
+    else:
+        sg_effective = sg["sg_total"]
 
     # Base rates
     eagle = hole["eagle_rate"]
@@ -143,35 +148,40 @@ def adjust_hole_probs(hole, sg, course_offset=0.0):
     bogey = hole["bogey_rate"]
     double = hole["double_rate"]
 
-    # Course difficulty offset: shifts scoring distribution
-    # Each +0.1 strokes over par per hole ≈ -2.2% birdie, +1.9% bogey, +0.55% double
-    birdie_course = -0.022 * (course_offset / 0.0556) if course_offset != 0 else 0
-    bogey_course = 0.019 * (course_offset / 0.0556) if course_offset != 0 else 0
-    double_course = 0.0055 * (course_offset / 0.0556) if course_offset != 0 else 0
-    # Simplify: 0.0556 = 1/18, so course_offset/0.0556 = course_offset * 18
-    # But course_offset is already (avg_score - 72) / 18
-    # So course_offset / 0.0556 = (avg_score - 72), the total stroke diff
-    # Net: use the same per-stroke slopes as SG adjustment
+    # Course difficulty offset
     birdie_course = -0.022 * course_offset * 18
     bogey_course = 0.019 * course_offset * 18
     double_course = 0.0055 * course_offset * 18
 
-    # Per-hole birdie shift: empirical ~0.022 per +1.0 sg_total per hole
-    # (0.397 birdies/round / 18 holes)
-    birdie_shift = 0.022 * sg_total + birdie_course
+    # Improvement 3: Per-hole volatility noise (same for all players this iteration)
+    # Positive noise = harder (fewer birdies, more bogeys)
+    birdie_noise = -0.022 * hole_noise
+    bogey_noise = 0.019 * hole_noise
+    double_noise = 0.0055 * hole_noise
+
+    # Per-hole birdie shift: ~0.022 per +1.0 sg per hole
+    birdie_shift = 0.022 * sg_effective + birdie_course + birdie_noise
 
     # Eagle shift on par 5s: driven by sg_ott + sg_app
     eagle_shift = 0.0
     if par == 5:
         sg_power = sg["sg_ott"] + sg["sg_app"]
-        eagle_shift = 0.008 * sg_power  # ~0.8% per +1.0 combined
+        eagle_shift = 0.008 * sg_power
 
-    # Bogey shift: negative SG increases bogey risk
-    # Empirical: -0.019 bogeys/hole per +1.0 sg_total
-    bogey_shift = -0.019 * sg_total + bogey_course
+    # Bogey shift: -0.019 per +1.0 sg per hole
+    bogey_shift = -0.019 * sg_effective + bogey_course + bogey_noise
 
-    # Double shift: -0.0055 per +1.0 sg_total per hole
-    double_shift = -0.0055 * sg_total + double_course
+    # Double shift: -0.0055 per +1.0 sg per hole
+    double_shift = -0.0055 * sg_effective + double_course + double_noise
+
+    # Improvement 1: sg_arg reduces doubles on high-double-rate holes
+    # Holes with >4% base double rate (hole 4: 4.7%, hole 17: 8.0%, hole 18: 8.1%)
+    # Good scrambling (positive sg_arg) converts potential doubles into pars
+    if hole["double_rate"] > 0.04:
+        sg_arg = sg["sg_arg"]
+        double_shift -= 0.008 * sg_arg
+        # Redistribute to par, not birdie — scrambling saves par, doesn't make birdie
+        par_r += 0.008 * sg_arg
 
     # Apply shifts
     eagle = max(0, eagle + eagle_shift)
@@ -205,7 +215,7 @@ def sample_hole(probs, rng):
     return PAR  # fallback
 
 
-def sim_round(holes, sg, rng, course_offset=0.0):
+def sim_round(holes, sg, rng, course_offset=0.0, hole_noise_array=None):
     """
     Simulate one 18-hole round.
 
@@ -214,6 +224,8 @@ def sim_round(holes, sg, rng, course_offset=0.0):
         sg: drawn SG components for this round
         rng: random generator
         course_offset: per-hole difficulty shift (default 0.0)
+        hole_noise_array: optional array of 18 noise values for this round/iteration.
+            Same values used for all players in this iteration (correlated conditions).
 
     Returns:
         scores: list of 18 outcome indices (EAGLE..DOUBLE)
@@ -229,8 +241,9 @@ def sim_round(holes, sg, rng, course_offset=0.0):
                DK_PTS["bogey"], DK_PTS["double"]]
     stroke_vals = [-2, -1, 0, 1, 2]  # relative to par
 
-    for hole in holes:
-        probs = adjust_hole_probs(hole, sg, course_offset)
+    for h_idx, hole in enumerate(holes):
+        noise = hole_noise_array[h_idx] if hole_noise_array is not None else 0.0
+        probs = adjust_hole_probs(hole, sg, course_offset, hole_noise=noise)
         outcome = sample_hole(probs, rng)
         scores.append(outcome)
         dk_pts += dk_vals[outcome]
@@ -281,14 +294,18 @@ def simulate_tournament(players, n_iterations=10000, cut_size=65, seed=42,
         dict: player -> list of total DK pts per iteration
     """
     rng = random.Random(seed)
+    np_rng = np.random.RandomState(seed)
     by_id, by_name = load_sg_profiles()
     holes = load_hole_profiles()
 
     # Compute per-hole difficulty offset from course_avg_score
-    # course_avg_score=72.0 -> offset=0.0 (neutral, base probs unchanged)
-    # course_avg_score=73.0 -> offset=+0.0556/hole (harder)
-    # course_avg_score=71.0 -> offset=-0.0556/hole (easier)
     course_offset = (course_avg_score - 72.0) / 18.0
+
+    # Improvement 3: Pre-draw per-hole volatility noise for all iterations & rounds
+    # Shape (n_iterations, 4 rounds, 18 holes) — same conditions for all players
+    hole_stds = np.array([h["scoring_std"] for h in holes])  # (18,)
+    hole_noise_all = np_rng.normal(0, hole_stds * 0.3,
+                                   size=(n_iterations, 4, 18))
 
     # Resolve all player profiles
     profiles = {}
@@ -299,6 +316,9 @@ def simulate_tournament(players, n_iterations=10000, cut_size=65, seed=42,
     field_size = len(players)
 
     for _iter in range(n_iterations):
+        # Per-round hole noise for this iteration (shared by all players)
+        rd_noise = [hole_noise_all[_iter, rd, :] for rd in range(4)]
+
         # --- Draw SG for all 4 rounds upfront per player ---
         player_sgs = {}
         for p in players:
@@ -307,8 +327,10 @@ def simulate_tournament(players, n_iterations=10000, cut_size=65, seed=42,
         # --- Rounds 1 & 2 ---
         r12_data = {}
         for p in players:
-            rd1_scores, rd1_pts, rd1_strokes = sim_round(holes, player_sgs[p][0], rng, course_offset)
-            rd2_scores, rd2_pts, rd2_strokes = sim_round(holes, player_sgs[p][1], rng, course_offset)
+            rd1_scores, rd1_pts, rd1_strokes = sim_round(
+                holes, player_sgs[p][0], rng, course_offset, hole_noise_array=rd_noise[0])
+            rd2_scores, rd2_pts, rd2_strokes = sim_round(
+                holes, player_sgs[p][1], rng, course_offset, hole_noise_array=rd_noise[1])
             r12_data[p] = {
                 "dk_pts": rd1_pts + rd2_pts,
                 "strokes": rd1_strokes + rd2_strokes,
@@ -317,14 +339,12 @@ def simulate_tournament(players, n_iterations=10000, cut_size=65, seed=42,
 
         # --- Apply cut ---
         if dg_cut_probs is not None:
-            # DG probability-based cut: each player draws independently
             made_cut = set()
             for p in players:
-                cut_prob = dg_cut_probs.get(p, 0.5)  # default 50% if missing
+                cut_prob = dg_cut_probs.get(p, 0.5)
                 if rng.random() < cut_prob:
                     made_cut.add(p)
         else:
-            # Stroke-based cut: top N by 2-round score
             sorted_field = sorted(r12_data.items(), key=lambda x: x[1]["strokes"])
             if field_size > cut_size:
                 cut_stroke = sorted_field[cut_size - 1][1]["strokes"]
@@ -343,8 +363,10 @@ def simulate_tournament(players, n_iterations=10000, cut_size=65, seed=42,
                 }
                 continue
 
-            rd3_scores, rd3_pts, rd3_strokes = sim_round(holes, player_sgs[p][2], rng, course_offset)
-            rd4_scores, rd4_pts, rd4_strokes = sim_round(holes, player_sgs[p][3], rng, course_offset)
+            rd3_scores, rd3_pts, rd3_strokes = sim_round(
+                holes, player_sgs[p][2], rng, course_offset, hole_noise_array=rd_noise[2])
+            rd4_scores, rd4_pts, rd4_strokes = sim_round(
+                holes, player_sgs[p][3], rng, course_offset, hole_noise_array=rd_noise[3])
 
             final_data[p] = {
                 "dk_pts": r12_data[p]["dk_pts"] + rd3_pts + rd4_pts,
