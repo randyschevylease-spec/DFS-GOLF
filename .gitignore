@@ -16,7 +16,22 @@ __pycache__/
 *.pyo
 *.egg-info/
 .env
+credentials.json
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Legacy
+cache/
+logs/
+shared/
+history/
+lineups_*.csv
+lineups_*.csv.bak
+cognizant_*_field.csv
+cognizant_field.csv
+flopshot_*_field.csv
+masters_*_field.csv
+masters_*_review.csv
+field_portfolio.csv

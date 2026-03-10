@@ -1,0 +1,67 @@
+Lineup #,G,G,G,G,G,G,Salary,Proj Pts,Proj ROI %,Geomean Own %
+1306,Ryan Gerard,Nicolai Hojgaard,Keith Mitchell,Max Homa,Beau Hossler,Dylan Wu,50000,428.2,1.7,9.04
+5363,Shane Lowry,Ryan Gerard,Rasmus Hojgaard,Zecheng Dou,Beau Hossler,John VanDerLaan,49300,421.2,20.7,6.03
+1993,Shane Lowry,Ryan Gerard,Rasmus Hojgaard,Tom Kim,Steven Fisk,Austin Smotherman,49900,426.6,2.6,8.74
+4099,Ryan Gerard,Rasmus Hojgaard,Keith Mitchell,Ricky Castillo,Kevin Roy,Adrien Saddier,49800,423.0,11.4,6.96
+6996,Shane Lowry,Ryan Gerard,Keith Mitchell,Chad Ramey,Matti Schmid,Chandler Blanchet,48900,419.1,18.4,5.71
+2462,Shane Lowry,Rasmus Hojgaard,Nicolai Hojgaard,Sami Valimaki,Chad Ramey,Matti Schmid,50000,425.7,6.2,8.09
+4032,Ryan Gerard,Nicolai Hojgaard,Michael Thorbjornsen,Stephan Jaeger,Vince Whaley,Zachary Bauchou,49500,423.1,2.1,8.56
+7360,Shane Lowry,Ryan Gerard,Mac Meissner,Sami Valimaki,Adrien Saddier,Keita Nakajima,48600,418.6,17.8,6.14
+8130,Nicolai Hojgaard,Daniel Berger,Max McGreevy,Mac Meissner,Garrick Higgo,John VanDerLaan,48200,417.6,15.4,6.89
+6756,Shane Lowry,Ryan Gerard,Michael Thorbjornsen,Matt Wallace,Webb Simpson,Christo Lamprecht,49300,419.4,21.2,5.62
+5412,Ryan Gerard,Davis Thompson,Thorbjorn Olesen,Mac Meissner,Matt Wallace,Matti Schmid,48900,421.1,9.0,6.92
+3046,Shane Lowry,Ryan Gerard,Christiaan Bezuidenhout,Mackenzie Hughes,Vince Whaley,Lee Hodges,50000,424.6,1.7,8.62
+4770,Shane Lowry,Rasmus Neergaard-Petersen,Max McGreevy,Rico Hoey,Mackenzie Hughes,Mark Hubbard,48700,422.0,6.7,7.52
+5460,Keith Mitchell,Daniel Berger,Davis Thompson,Thorbjorn Olesen,Rico Hoey,Dylan Wu,49700,421.0,4.9,7.66
+5721,Ryan Gerard,Thorbjorn Olesen,Max McGreevy,Rico Hoey,Mackenzie Hughes,Webb Simpson,48200,420.7,12.5,6.7
+5793,Ryan Gerard,Rasmus Hojgaard,Mackenzie Hughes,Nicolas Echavarria,Kris Ventura,Vince Whaley,48400,420.6,6.8,7.37
+546,Ryan Gerard,Nicolai Hojgaard,Davis Thompson,Mac Meissner,Doug Ghim,Takumi Kanaya,50000,431.1,-0.2,9.53
+173,Ryan Gerard,Michael Thorbjornsen,Max McGreevy,Rico Hoey,Michael Brennan,Dylan Wu,48700,434.0,-1.9,10.26
+
+GOLFER EXPOSURE
+Golfer,Lineups,Exposure % (of 18)
+Ryan Gerard,14,77.8
+Shane Lowry,8,44.4
+Nicolai Hojgaard,5,27.8
+Rasmus Hojgaard,5,27.8
+Keith Mitchell,4,22.2
+Mac Meissner,4,22.2
+Max McGreevy,4,22.2
+Mackenzie Hughes,4,22.2
+Rico Hoey,4,22.2
+Dylan Wu,3,16.7
+Matti Schmid,3,16.7
+Michael Thorbjornsen,3,16.7
+Vince Whaley,3,16.7
+Davis Thompson,3,16.7
+Thorbjorn Olesen,3,16.7
+Beau Hossler,2,11.1
+John VanDerLaan,2,11.1
+Adrien Saddier,2,11.1
+Chad Ramey,2,11.1
+Sami Valimaki,2,11.1
+Daniel Berger,2,11.1
+Matt Wallace,2,11.1
+Webb Simpson,2,11.1
+Max Homa,1,5.6
+Zecheng Dou,1,5.6
+Tom Kim,1,5.6
+Steven Fisk,1,5.6
+Austin Smotherman,1,5.6
+Ricky Castillo,1,5.6
+Kevin Roy,1,5.6
+Chandler Blanchet,1,5.6
+Stephan Jaeger,1,5.6
+Zachary Bauchou,1,5.6
+Keita Nakajima,1,5.6
+Garrick Higgo,1,5.6
+Christo Lamprecht,1,5.6
+Christiaan Bezuidenhout,1,5.6
+Lee Hodges,1,5.6
+Rasmus Neergaard-Petersen,1,5.6
+Mark Hubbard,1,5.6
+Nicolas Echavarria,1,5.6
+Kris Ventura,1,5.6
+Doug Ghim,1,5.6
+Takumi Kanaya,1,5.6
+Michael Brennan,1,5.6
