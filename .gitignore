@@ -1,0 +1,22 @@
+# Data files (large, generated)
+data/cache/
+data/raw/
+data/processed/
+data/export/
+
+# Numpy arrays
+*.npy
+
+# Reports (generated)
+reports/*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
