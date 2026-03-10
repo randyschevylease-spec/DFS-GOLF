@@ -29,7 +29,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "engine"))
 
 SIM_PROFILES = os.path.join(PROJECT_ROOT, "data", "cache", "sim_profiles_current.csv")
-DK_PROJECTIONS = os.path.join(PROJECT_ROOT, "data", "raw", "dk_projections_players.csv")
+DK_PROJECTIONS = os.path.join(PROJECT_ROOT, "data", "raw", "draftkings_main_projections__3_.csv")
 OUTPUT = os.path.join(PROJECT_ROOT, "data", "cache", "candidates.csv")
 
 SALARY_CAP = 50_000

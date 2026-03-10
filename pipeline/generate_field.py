@@ -28,7 +28,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "engine"))
 
 SIM_PROFILES = os.path.join(PROJECT_ROOT, "data", "cache", "sim_profiles_current.csv")
-DK_PROJECTIONS = os.path.join(PROJECT_ROOT, "data", "raw", "dk_projections_players.csv")
+DK_PROJECTIONS = os.path.join(PROJECT_ROOT, "data", "raw", "draftkings_main_projections__3_.csv")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "cache")
 
 SALARY_CAP = 50_000
@@ -106,18 +106,21 @@ def perturb_ownership(ownership, rng):
     - 8-15%: ±25% relative noise
     - < 8%:  ±45% relative noise
 
-    Returns perturbed ownership array clipped to [0.01, 0.85].
+    Returns perturbed ownership array clipped to [0.5, 85].
     """
     perturbed = ownership.copy()
     n = len(ownership)
 
+    # Floor zero-ownership players to 0.5% before perturbation
+    perturbed = np.maximum(perturbed, 0.5)
+
     noise_scale = np.where(
-        ownership >= 15, 0.15,
-        np.where(ownership >= 8, 0.25, 0.45)
+        perturbed >= 15, 0.15,
+        np.where(perturbed >= 8, 0.25, 0.45)
     )
     noise = rng.normal(0, noise_scale, n)
-    perturbed = ownership * (1 + noise)
-    return np.clip(perturbed, 0.01, 0.85)
+    perturbed = perturbed * (1 + noise)
+    return np.clip(perturbed, 0.5, 85)
 
 
 def build_tier_lineups(n_lineups, weights, salaries, n_players, salary_cap,
