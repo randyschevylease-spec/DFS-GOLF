@@ -1,283 +1,303 @@
 """
-portfolio_select.py — Bergman E[max] portfolio selection.
+portfolio_select.py -- Bergman E[max] portfolio selection from contest sim results.
 
-From a pool of candidate lineups, selects the optimal portfolio of N lineups
-that maximizes expected maximum payout (E[max]) across the portfolio.
+Selects 150 lineups from 100k contest_sim_results.csv using greedy forward
+selection that maximizes E[max payout] with a diversity bonus to penalize
+player overlap.
 
-The key insight: in a GPP, you only need ONE lineup to hit. So the optimal
-portfolio maximizes the probability that at least one lineup finishes in
-the money, weighted by payout size.
+Pipeline:
+  1. Light pre-filter: remove dead lineups (mean_ev < -15, cash_rate < 15%)
+  2. Parse player IDs and build player membership matrix
+  3. Vectorized greedy forward selection: score = mean_ev + diversity_bonus
+  4. Portfolio metrics and save
 
-Algorithm:
-  1. Score all candidate lineups across sim iterations
-  2. Greedy forward selection:
-     a. Start with empty portfolio
-     b. For each candidate, compute marginal E[max] if added
-     c. Add the candidate with highest marginal gain
-     d. Repeat until portfolio is full
-
-  This is a greedy approximation to the NP-hard E[max] optimization,
-  which works well because the objective is submodular.
-
-Inputs:
-  - Candidate lineups from build_candidates.py
-  - Player sim results from player_sim.simulate_tournament()
-  - Payout structure from payout.py
-
-Output:
-  - data/cache/portfolio_selected.csv
+Input:  data/cache/contest_sim_results.csv (100,000 rows)
+Output: data/cache/portfolio_selected.csv (150 rows)
 """
 
 import csv
-import math
 import os
-import random
 import sys
+import time
+from collections import defaultdict
+
+import numpy as np
+
+sys.stdout.reconfigure(encoding='utf-8')
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "engine"))
-
-from payout import get_payout, MILLY_MAKER_PAYOUTS, MILLY_MAKER_ENTRY, MILLY_MAKER_FIELD
-
-CANDIDATES_PATH = os.path.join(PROJECT_ROOT, "data", "cache", "candidates.csv")
+INPUT = os.path.join(PROJECT_ROOT, "data", "cache", "contest_sim_results.csv")
 OUTPUT = os.path.join(PROJECT_ROOT, "data", "cache", "portfolio_selected.csv")
 
+N_PORTFOLIO = 150
+ENTRY_FEE = 25
+DIVERSITY_WEIGHT = 0.35
 
-def load_candidates(path=None):
-    """Load candidate lineups with ownership data. Returns list of candidate dicts."""
-    if path is None:
-        path = CANDIDATES_PATH
-    candidates = []
+
+def load_results(path):
+    """Load contest sim results. Returns list of dicts with parsed fields."""
+    rows = []
     with open(path) as f:
         for row in csv.DictReader(f):
-            dg_ids = []
-            names = []
+            player_ids = []
+            player_names = []
             for i in range(1, 7):
-                dg_ids.append(int(row[f"p{i}_id"]))
-                names.append(row[f"p{i}_name"])
-            candidates.append({
-                "lineup_id": int(row["lineup_id"]),
-                "dg_ids": tuple(dg_ids),
-                "names": names,
-                "total_salary": int(row["total_salary"]),
+                player_ids.append(row[f"p{i}_id"])
+                player_names.append(row[f"p{i}_name"])
+            rows.append({
+                "lineup_id": row["lineup_id"],
                 "strategy": row["strategy"],
-                "ownership_product": float(row.get("ownership_product", 0)),
-                "expected_dupes": float(row.get("expected_dupes", 0)),
+                "player_ids": player_ids,
+                "player_names": player_names,
+                "total_salary": int(row["total_salary"]),
+                "mean_ev": float(row["mean_ev"]),
+                "mean_payout": float(row["mean_payout"]),
+                "cash_rate": float(row["cash_rate"]),
+                "top1000_rate": float(row["top1000_rate"]),
+                "top100_rate": float(row["top100_rate"]),
+                "cross_field_stability": float(row["cross_field_stability"]),
+                "sim_p90_score": float(row["sim_p90_score"]),
+                "raw": row,
             })
-    return candidates
+    return rows
 
 
-def score_lineups(candidates, player_results, n_iterations=None):
+def pre_filter(rows):
+    """Light filter: remove only genuinely dead lineups."""
+    n_total = len(rows)
+    filtered = [
+        r for r in rows
+        if r["mean_ev"] >= -15
+        and r["cash_rate"] >= 0.15
+    ]
+    ev_pass = sum(1 for r in rows if r["mean_ev"] >= -15)
+    cash_pass = sum(1 for r in rows if r["cash_rate"] >= 0.15)
+    print(f"  Pre-filter ({n_total:,} input):")
+    print(f"    mean_ev >= -15:    {ev_pass:,} pass")
+    print(f"    cash_rate >= 0.15: {cash_pass:,} pass")
+    print(f"    Both:              {len(filtered):,} pass")
+    return filtered
+
+
+def build_player_matrix(pool):
     """
-    Score all candidate lineups across sim iterations.
-
-    Args:
-        candidates: list of candidate dicts with 'dg_ids'
-        player_results: dict of dg_id -> list of DK pts per iteration
-        n_iterations: limit iterations (default: all)
+    Build player membership matrix for vectorized overlap calculation.
 
     Returns:
-        list of score arrays, one per candidate.
-        Each array has n_iterations entries of total lineup DK pts.
+        player_matrix: bool array (n_lineups, n_players)
+        player_id_list: list of unique player IDs (index corresponds to matrix column)
+        mean_ev_array: float array (n_lineups,)
     """
-    sample_key = next(iter(player_results))
-    max_iters = len(player_results[sample_key])
-    if n_iterations is None:
-        n_iterations = max_iters
-    n_iterations = min(n_iterations, max_iters)
+    # Collect all unique player IDs
+    all_ids = set()
+    for r in pool:
+        all_ids.update(r["player_ids"])
+    player_id_list = sorted(all_ids)
+    id_to_idx = {pid: i for i, pid in enumerate(player_id_list)}
 
-    scored = []
-    for cand in candidates:
-        lineup_scores = []
-        for i in range(n_iterations):
-            pts = sum(player_results.get(did, [0] * max_iters)[i] for did in cand["dg_ids"])
-            lineup_scores.append(pts)
-        scored.append(lineup_scores)
+    n = len(pool)
+    n_players = len(player_id_list)
+    player_matrix = np.zeros((n, n_players), dtype=np.bool_)
+    mean_ev_array = np.zeros(n, dtype=np.float64)
 
-    return scored, n_iterations
+    for i, r in enumerate(pool):
+        for pid in r["player_ids"]:
+            player_matrix[i, id_to_idx[pid]] = True
+        mean_ev_array[i] = r["mean_ev"]
 
-
-def estimate_rank(lineup_score, opponent_mean, opponent_std, n_opponents, rng):
-    """Estimate contest rank using normal approximation."""
-    # What percentile is this score in the opponent distribution?
-    if opponent_std <= 0:
-        return 1
-    z = (lineup_score - opponent_mean) / opponent_std
-    # Approximate percentile using standard normal CDF
-    # P(X < score) ≈ using error function
-    p_better = 0.5 * (1 + math.erf(z / math.sqrt(2)))
-    # Rank = (1 - p_better) * n_opponents + 1
-    rank = max(1, int((1 - p_better) * n_opponents) + 1)
-    return rank
+    return player_matrix, player_id_list, mean_ev_array
 
 
-def greedy_emax_select(scored, candidates, n_portfolio,
-                       opponent_mean=330, opponent_std=45,
-                       n_opponents=MILLY_MAKER_FIELD,
-                       payout_table=None, entry_fee=None,
-                       dupe_adjust=True, seed=42):
+def greedy_select(pool, player_matrix, mean_ev_array, n_select):
     """
-    Greedy forward selection maximizing E[max payout] across portfolio.
+    Vectorized greedy forward selection.
 
-    For each iteration, the portfolio payout = max(payout of each lineup).
-    We greedily add the lineup that maximizes the expected portfolio payout.
-
-    When dupe_adjust=True, raw payouts are divided by (dupe_count + 1) where
-    dupe_count is drawn from Poisson(expected_dupes) per iteration. This
-    penalizes high-ownership lineups that are likely to be duplicated.
-
-    Args:
-        scored: list of score arrays per candidate
-        candidates: candidate metadata (with ownership_product, expected_dupes)
-        n_portfolio: number of lineups to select
-        opponent_mean/std: opponent lineup score distribution
-        n_opponents: contest field size
-        payout_table: payout structure
-        entry_fee: cost per entry
-        dupe_adjust: apply ownership-based dupe penalty (default True)
-        seed: random seed for Poisson draws
-
-    Returns:
-        list of selected candidate indices
+    score = mean_ev + DIVERSITY_WEIGHT * (1 - overlap_fraction) * |median_ev|
+    overlap_fraction = (# players in lineup that appear in portfolio) / 6
     """
-    if payout_table is None:
-        payout_table = MILLY_MAKER_PAYOUTS
-    if entry_fee is None:
-        entry_fee = MILLY_MAKER_ENTRY
+    n = len(pool)
+    median_ev = float(np.median(mean_ev_array))
+    print(f"  Median EV of pool: ${median_ev:.2f}")
+    abs_median = abs(median_ev)
 
-    rng = random.Random(seed)
-    n_iters = len(scored[0])
-    n_candidates = len(scored)
+    selected_indices = []
+    selected_mask = np.zeros(n, dtype=np.bool_)
 
-    # Precompute payouts per candidate per iteration (dupe-adjusted)
-    print("  Precomputing payouts...")
-    payouts = []
-    for c_idx in range(n_candidates):
-        exp_dupes = candidates[c_idx].get("expected_dupes", 0) if dupe_adjust else 0
-        c_payouts = []
-        for i in range(n_iters):
-            rank = estimate_rank(scored[c_idx][i], opponent_mean, opponent_std, n_opponents, None)
-            raw_payout = get_payout(rank, payout_table)
-            if exp_dupes > 0:
-                dupe_count = _poisson_sample(exp_dupes, rng)
-                c_payouts.append(raw_payout / (dupe_count + 1))
-            else:
-                c_payouts.append(raw_payout)
-        payouts.append(c_payouts)
+    # Track which players are in portfolio (count of appearances)
+    portfolio_player_present = np.zeros(player_matrix.shape[1], dtype=np.bool_)
 
-    if dupe_adjust:
-        n_with_dupes = sum(1 for c in candidates if c.get("expected_dupes", 0) > 0.01)
-        print(f"  Dupe-adjusted payouts for {n_with_dupes} lineups with >0.01 expected dupes")
+    for step in range(n_select):
+        # Vectorized overlap: how many of each lineup's 6 players are in portfolio
+        if step == 0:
+            overlaps = np.zeros(n, dtype=np.float64)
+        else:
+            # player_matrix (n, 121) dot portfolio_player_present (121,) -> (n,)
+            overlap_counts = player_matrix.dot(portfolio_player_present.astype(np.float64))
+            overlaps = overlap_counts / 6.0
+
+        diversity_bonus = DIVERSITY_WEIGHT * (1.0 - overlaps) * abs_median
+        scores = mean_ev_array + diversity_bonus
+        scores[selected_mask] = -1e9
+
+        best_idx = int(np.argmax(scores))
+        best_score = scores[best_idx]
+
+        selected_indices.append(best_idx)
+        selected_mask[best_idx] = True
+
+        # Update portfolio player presence
+        portfolio_player_present |= player_matrix[best_idx]
+
+        cand = pool[best_idx]
+        if (step + 1) <= 10 or (step + 1) % 25 == 0 or (step + 1) == n_select:
+            print(f"  Step {step+1:>3d}: +{cand['lineup_id']:>8s} "
+                  f"({cand['strategy']:<20s}) "
+                  f"ev=${cand['mean_ev']:>7.2f}  "
+                  f"overlap={overlaps[best_idx]:.3f}  "
+                  f"score={best_score:.2f}")
+
+    return selected_indices
+
+
+def compute_portfolio_overlap(pool, selected_indices):
+    """Compute per-lineup average overlap with rest of portfolio."""
+    selected = [pool[i] for i in selected_indices]
+    n = len(selected)
+    id_sets = [set(c["player_ids"]) for c in selected]
+
+    overlaps = []
+    for i in range(n):
+        if n == 1:
+            overlaps.append(0.0)
+            continue
+        total = sum(len(id_sets[i] & id_sets[j]) for j in range(n) if j != i)
+        overlaps.append(total / (6 * (n - 1)))
+    return overlaps
+
+
+def print_portfolio_metrics(pool, selected_indices, overlaps):
+    """Print comprehensive portfolio-level metrics."""
+    selected = [pool[i] for i in selected_indices]
+    n = len(selected)
+
+    bot_counts = defaultdict(int)
+    for c in selected:
+        bot_counts[c["strategy"]] += 1
+
+    player_exposure = defaultdict(int)
+    player_name_map = {}
+    for c in selected:
+        for pid, name in zip(c["player_ids"], c["player_names"]):
+            player_exposure[pid] += 1
+            player_name_map[pid] = name
+
+    evs = [c["mean_ev"] for c in selected]
+    cash_rates = [c["cash_rate"] for c in selected]
+
+    print("\n" + "=" * 70)
+    print("PORTFOLIO SUMMARY")
+    print("=" * 70)
+
+    print(f"\n  Lineups selected:    {n}")
+    print(f"  Total invested:      ${n * ENTRY_FEE:,}")
+    print(f"  Mean EV per lineup:  ${sum(evs)/n:.2f}")
+    print(f"  Median EV:           ${sorted(evs)[n//2]:.2f}")
+    print(f"  Min EV in portfolio: ${min(evs):.2f}")
+    print(f"  Sum of mean_ev:      ${sum(evs):,.2f}")
+    print(f"  Expected gross:      ${sum(c['mean_payout'] for c in selected):,.2f}")
+    print(f"  Expected net profit: ${sum(evs):,.2f}")
+    print(f"  Mean cash rate:      {sum(cash_rates)/n:.1%}")
+    print(f"  Mean overlap:        {sum(overlaps)/n:.3f}  (target <= 0.500)")
+
+    print(f"\n  Bot archetype distribution:")
+    print(f"  {'Bot':<22s} {'Count':>6s} {'%':>7s}")
+    print(f"  {'-'*22} {'-'*6} {'-'*7}")
+    for strat in sorted(bot_counts, key=lambda s: -bot_counts[s]):
+        c = bot_counts[strat]
+        print(f"  {strat:<22s} {c:>6d} {c/n:>7.1%}")
+
+    sorted_players = sorted(player_exposure.items(), key=lambda x: -x[1])
+    print(f"\n  Top 10 most-used players:")
+    print(f"  {'Player':<28s} {'Lineups':>8s} {'Exposure':>9s}")
+    print(f"  {'-'*28} {'-'*8} {'-'*9}")
+    for pid, count in sorted_players[:10]:
+        print(f"  {player_name_map[pid]:<28s} {count:>8d} {count/n:>9.1%}")
+
+    print(f"\n  Top 10 least-used players (contrarian):")
+    print(f"  {'Player':<28s} {'Lineups':>8s} {'Exposure':>9s}")
+    print(f"  {'-'*28} {'-'*8} {'-'*9}")
+    for pid, count in sorted_players[-10:]:
+        print(f"  {player_name_map[pid]:<28s} {count:>8d} {count/n:>9.1%}")
+
+    # Per-lineup detail
+    print(f"\n  Per-lineup detail:")
+    print(f"  {'Rank':>4s}  {'LineupID':>8s}  {'Bot':<20s}  "
+          f"{'mean_ev':>9s}  {'cash%':>6s}  {'stab':>6s}  {'overlap':>7s}")
+    print(f"  {'----':>4s}  {'--------':>8s}  {'-'*20}  "
+          f"{'-'*9}  {'-'*6}  {'-'*6}  {'-'*7}")
+    for rank, (idx, ol) in enumerate(zip(selected_indices, overlaps), 1):
+        cand = pool[idx]
+        print(f"  {rank:>4d}  {cand['lineup_id']:>8s}  {cand['strategy']:<20s}  "
+              f"${cand['mean_ev']:>8.2f}  {cand['cash_rate']:>5.1%}  "
+              f"{cand['cross_field_stability']:>6.1f}  {ol:>7.3f}")
+
+
+def save_portfolio(pool, selected_indices, overlaps, path):
+    """Save selected portfolio with original columns plus selection metadata."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    sample = pool[selected_indices[0]]["raw"]
+    original_cols = list(sample.keys())
+    extra_cols = ["selection_rank", "avg_portfolio_overlap"]
+
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(extra_cols + original_cols)
+        for rank, (idx, ol) in enumerate(zip(selected_indices, overlaps), 1):
+            raw = pool[idx]["raw"]
+            writer.writerow([rank, f"{ol:.4f}"] + [raw[c] for c in original_cols])
+
+    print(f"\n  Saved {len(selected_indices)} lineups to {path}")
+
+
+def run():
+    t0 = time.perf_counter()
+
+    # Load
+    print("Step 1: Loading contest sim results...")
+    rows = load_results(INPUT)
+    print(f"  {len(rows):,} lineups loaded")
+
+    # Pre-filter
+    print("\nStep 2: Pre-filtering (light)...")
+    pool = pre_filter(rows)
+    rows = None
+
+    # Build player matrix
+    print(f"\nStep 3: Building player membership matrix...")
+    t_mat = time.perf_counter()
+    player_matrix, player_id_list, mean_ev_array = build_player_matrix(pool)
+    print(f"  Matrix shape: {player_matrix.shape} ({player_matrix.nbytes / 1e6:.1f} MB)")
+    print(f"  Built in {time.perf_counter() - t_mat:.1f}s")
 
     # Greedy selection
-    selected = []
-    # portfolio_max[i] = current max payout in portfolio for iteration i
-    portfolio_max = [0.0] * n_iters
+    print(f"\nStep 4: Greedy E[max] selection ({N_PORTFOLIO} lineups from {len(pool):,} candidates)...")
+    t_sel = time.perf_counter()
+    selected_indices = greedy_select(pool, player_matrix, mean_ev_array, N_PORTFOLIO)
+    print(f"  Selection done in {time.perf_counter() - t_sel:.1f}s")
 
-    for step in range(n_portfolio):
-        best_idx = -1
-        best_marginal = -float("inf")
-
-        for c_idx in range(n_candidates):
-            if c_idx in selected:
-                continue
-
-            # Marginal gain: how much does adding this lineup improve E[max]?
-            marginal = 0.0
-            for i in range(n_iters):
-                new_max = max(portfolio_max[i], payouts[c_idx][i])
-                marginal += (new_max - portfolio_max[i])
-            marginal /= n_iters
-
-            if marginal > best_marginal:
-                best_marginal = marginal
-                best_idx = c_idx
-
-        if best_idx < 0:
-            break
-
-        selected.append(best_idx)
-        # Update portfolio max
-        for i in range(n_iters):
-            portfolio_max[i] = max(portfolio_max[i], payouts[best_idx][i])
-
-        avg_portfolio_ev = sum(portfolio_max) / n_iters - entry_fee * (step + 1)
-        cand = candidates[best_idx]
-        dupes_str = f" dupes={cand.get('expected_dupes', 0):.3f}" if dupe_adjust else ""
-        print(f"  Step {step+1}: +lineup {cand['lineup_id']} "
-              f"(marginal=${best_marginal:.2f}{dupes_str}) "
-              f"portfolio_ev=${avg_portfolio_ev:.2f}")
-
-    return selected
-
-
-def _poisson_sample(lam, rng):
-    """Draw from Poisson(lam) using inverse transform / normal approx."""
-    if lam <= 0:
-        return 0
-    if lam < 30:
-        L = math.exp(-lam)
-        k = 0
-        p = 1.0
-        while True:
-            k += 1
-            p *= rng.random()
-            if p <= L:
-                return k - 1
-    else:
-        return max(0, int(round(rng.gauss(lam, math.sqrt(lam)))))
-
-
-def select_portfolio(player_results, n_portfolio=20,
-                     opponent_mean=330, opponent_std=45,
-                     n_iterations=None, seed=42):
-    """
-    Full portfolio selection pipeline.
-
-    Args:
-        player_results: dict of dg_id -> list of DK pts per iteration
-        n_portfolio: number of lineups to select
-        opponent_mean/std: calibrated opponent distribution
-        n_iterations: sim iterations to use
-        seed: random seed
-
-    Returns:
-        list of selected candidate dicts
-    """
-    print("Loading candidates...")
-    candidates = load_candidates()
-    print(f"  {len(candidates)} candidates loaded")
-
-    print("Scoring lineups across sim iterations...")
-    scored, n_iters = score_lineups(candidates, player_results, n_iterations)
-    print(f"  Scored {len(scored)} lineups x {n_iters} iterations")
-
-    print(f"\nRunning greedy E[max] selection (target: {n_portfolio} lineups)...")
-    selected_indices = greedy_emax_select(
-        scored, candidates, n_portfolio,
-        opponent_mean=opponent_mean,
-        opponent_std=opponent_std,
-    )
-
-    # Build output
-    selected = [candidates[i] for i in selected_indices]
+    # Portfolio overlap
+    print("\nStep 5: Computing portfolio metrics...")
+    overlaps = compute_portfolio_overlap(pool, selected_indices)
+    print_portfolio_metrics(pool, selected_indices, overlaps)
 
     # Save
-    os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
-    with open(OUTPUT, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["portfolio_rank", "lineup_id", "strategy", "total_salary",
-                         "p1", "p2", "p3", "p4", "p5", "p6"])
-        for rank, cand in enumerate(selected, 1):
-            writer.writerow([
-                rank, cand["lineup_id"], cand["strategy"], cand["total_salary"],
-                *cand["names"],
-            ])
+    print("\nStep 6: Saving...")
+    save_portfolio(pool, selected_indices, overlaps, OUTPUT)
 
-    print(f"\nSaved {len(selected)} lineups to {OUTPUT}")
-    return selected
+    elapsed = time.perf_counter() - t0
+    print(f"\n  Total runtime: {elapsed:.1f}s")
 
 
 if __name__ == "__main__":
-    print("portfolio_select.py requires player_results from player_sim.")
-    print("Run via the main pipeline orchestrator.")
+    run()

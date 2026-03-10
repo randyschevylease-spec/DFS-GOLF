@@ -32,7 +32,7 @@ DK_PROJECTIONS = os.path.join(PROJECT_ROOT, "data", "raw", "dk_projections_playe
 SIM_PROFILES = os.path.join(PROJECT_ROOT, "data", "cache", "sim_profiles_current.csv")
 OUTPUT = os.path.join(PROJECT_ROOT, "data", "cache", "contest_sim_results.csv")
 
-N_ITERATIONS = 2000
+N_ITERATIONS = 10000
 FIELD_CHUNK = 2000
 SALARY_CAP = 50_000
 ENTRY_FEE = MILLY_MAKER_ENTRY
@@ -203,13 +203,11 @@ def rank_candidates_against_field(candidate_scores, field_path,
     """
     For each iteration, score the full field and rank each candidate.
 
-    Scores all 105k field lineups per iteration in one vectorized op,
-    then uses a single searchsorted to rank all 100k candidates.
-    Memory: ~420KB per iteration (105k float32) — well under budget.
+    Memory-efficient: accumulates stats per iteration instead of storing
+    full (n_cand, n_iters) rank/payout matrices. Uses ~1MB per iteration.
 
     Returns:
-        ranks: (n_cand, N_ITERATIONS) int32
-        payouts: (n_cand, N_ITERATIONS) float32
+        dict of accumulated per-field stats (n_cand,) arrays
     """
     field = np.load(field_path)  # (105800, 6) int64
     n_field = field.shape[0]
@@ -221,8 +219,12 @@ def rank_candidates_against_field(candidate_scores, field_path,
     field_player_idx = _map_ids_to_indices(field, sorted_ids)
     del field
 
-    ranks = np.zeros((n_cand, n_iters), dtype=np.int32)
-    payouts = np.zeros((n_cand, n_iters), dtype=np.float32)
+    # Accumulators — no full matrices stored
+    min_cash = 40.0
+    payout_sum = np.zeros(n_cand, dtype=np.float64)
+    cash_count = np.zeros(n_cand, dtype=np.int32)
+    top1000_count = np.zeros(n_cand, dtype=np.int32)
+    top100_count = np.zeros(n_cand, dtype=np.int32)
 
     report_interval = max(1, n_iters // 10)
 
@@ -235,72 +237,73 @@ def rank_candidates_against_field(candidate_scores, field_path,
         # Sort field scores ascending for searchsorted
         field_sorted = np.sort(field_scores)
 
-        # Rank each candidate: count field lineups scoring >= candidate
+        # Rank each candidate
         cand_scores_it = candidate_scores[:, it]
-        # searchsorted(left) gives index of first element >= candidate
         insert_pos = np.searchsorted(field_sorted, cand_scores_it, side='left')
-        # Number beating candidate = n_field - insert_pos
         iter_ranks = (n_field - insert_pos + 1).astype(np.int32)
         iter_ranks = np.clip(iter_ranks, 1, n_field + 1)
-        ranks[:, it] = iter_ranks
 
         # Lookup payouts
         clipped_ranks = np.clip(iter_ranks, 0, len(payout_table_arr) - 1)
-        payouts[:, it] = payout_table_arr[clipped_ranks]
+        iter_payouts = payout_table_arr[clipped_ranks]
+
+        # Accumulate
+        payout_sum += iter_payouts.astype(np.float64)
+        cash_count += (iter_payouts >= min_cash).astype(np.int32)
+        top1000_count += (iter_ranks <= 1000).astype(np.int32)
+        top100_count += (iter_ranks <= 100).astype(np.int32)
 
         if (it + 1) % report_interval == 0 or it == 0:
             pct = (it + 1) / n_iters * 100
             med_rank = int(np.median(iter_ranks))
-            cashing = int(np.sum(payouts[:, it] > 0))
+            cashing = int(np.sum(iter_payouts > 0))
             print(f"    {field_label} iter {it+1}/{n_iters} ({pct:.0f}%) "
                   f"-- median rank {med_rank:,}, {cashing:,} cashing")
 
-    return ranks, payouts
+    field_mean_ev = (payout_sum / n_iters).astype(np.float32) - ENTRY_FEE
+
+    return {
+        "payout_sum": payout_sum,
+        "cash_count": cash_count,
+        "top1000_count": top1000_count,
+        "top100_count": top100_count,
+        "field_mean_ev": field_mean_ev,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Step 6: Compute metrics
 # ---------------------------------------------------------------------------
 
-def compute_metrics(candidate_scores, all_ranks, all_payouts):
+def compute_metrics(candidate_scores, field_stats_list):
     """
-    Compute per-candidate metrics across all iterations x 3 fields.
+    Compute per-candidate metrics from accumulated field stats.
 
-    Memory-efficient: computes per-field stats without full concatenation.
-
-    all_ranks: list of 3 arrays, each (n_cand, N_ITERATIONS)
-    all_payouts: list of 3 arrays, each (n_cand, N_ITERATIONS)
+    field_stats_list: list of 3 dicts from rank_candidates_against_field
     """
     n_cand = candidate_scores.shape[0]
-    n_fields = len(all_payouts)
-    n_iters = all_payouts[0].shape[1]
+    n_fields = len(field_stats_list)
+    n_iters = candidate_scores.shape[1]
     n_total = n_iters * n_fields
 
-    # Accumulate stats per field to avoid concatenation
-    min_cash = 40.0
     payout_sum = np.zeros(n_cand, dtype=np.float64)
     cash_count = np.zeros(n_cand, dtype=np.int32)
     top1000_count = np.zeros(n_cand, dtype=np.int32)
     top100_count = np.zeros(n_cand, dtype=np.int32)
-
     field_evs = []
-    for fi in range(n_fields):
-        p = all_payouts[fi]
-        r = all_ranks[fi]
-        field_mean_payout = p.mean(axis=1)
-        field_evs.append(field_mean_payout - ENTRY_FEE)
 
-        payout_sum += p.sum(axis=1).astype(np.float64)
-        cash_count += (p >= min_cash).sum(axis=1).astype(np.int32)
-        top1000_count += (r <= 1000).sum(axis=1).astype(np.int32)
-        top100_count += (r <= 100).sum(axis=1).astype(np.int32)
+    for fs in field_stats_list:
+        payout_sum += fs["payout_sum"]
+        cash_count += fs["cash_count"]
+        top1000_count += fs["top1000_count"]
+        top100_count += fs["top100_count"]
+        field_evs.append(fs["field_mean_ev"])
 
     mean_payout = (payout_sum / n_total).astype(np.float32)
     mean_ev = mean_payout - ENTRY_FEE
 
     sim_p90 = np.percentile(candidate_scores, 90, axis=1)
 
-    # Stack just the 3 per-field EV scalars per candidate (tiny: n_cand x 3)
     cross_field_stability = np.std(
         np.column_stack(field_evs), axis=1).astype(np.float32)
 
@@ -443,27 +446,25 @@ def run_contest_sim():
     # Step 5
     print(f"\nStep 5: Ranking against {N_FIELDS} fields...")
     payout_table_arr = build_payout_table()
-    all_ranks = []
-    all_payouts = []
+    field_stats_list = []
 
     for fi in range(1, N_FIELDS + 1):
         field_path = os.path.join(FIELD_DIR, f"field_{fi}.npy")
         print(f"\n  --- Field {fi} ---")
         t = time.perf_counter()
-        ranks, payouts = rank_candidates_against_field(
+        field_stats = rank_candidates_against_field(
             candidate_scores, field_path,
             player_matrix, sorted_ids,
             payout_table_arr, f"Field {fi}")
         elapsed = time.perf_counter() - t
         timers[f"field_{fi}"] = elapsed
-        all_ranks.append(ranks)
-        all_payouts.append(payouts)
+        field_stats_list.append(field_stats)
         print(f"    Field {fi} done in {elapsed:.1f}s")
 
     # Step 6
     print("\nStep 6: Computing metrics...")
     t = time.perf_counter()
-    metrics = compute_metrics(candidate_scores, all_ranks, all_payouts)
+    metrics = compute_metrics(candidate_scores, field_stats_list)
     timers["metrics"] = time.perf_counter() - t
 
     # Step 7
